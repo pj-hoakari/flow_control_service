@@ -5,15 +5,17 @@ from .enums import (
     NodeKind,
     ObservationType,
 )
-from .graph import Edge, Graph, Node
+from .graph import Edge, EdgeID, Graph, Node, NodeID
 
 __all__ = [
     "CurrentDirection",
     "DirectionConstraint",
     "Edge",
+    "EdgeID",
     "FlowDirection",
     "Graph",
     "Node",
+    "NodeID",
     "NodeKind",
     "ObservationType",
 ]
