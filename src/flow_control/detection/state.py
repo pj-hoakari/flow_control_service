@@ -1,0 +1,25 @@
+from dataclasses import dataclass
+from datetime import datetime
+from enum import Enum
+
+from ..domain.graph import EdgeID, NodeID
+
+
+class QueuedTriggerKind(str, Enum):
+    SURGE = "SURGE"  # 急増
+    HIGH_STAGNATION = "HIGH_STAGNATION"  # 高停滞
+    DANGER = "DANGER"  # 危険フラグ
+
+
+@dataclass(frozen=True)
+class QueuedTrigger:
+    kind: QueuedTriggerKind
+    first_fired_at: datetime
+    last_fired_at: datetime
+    origin_edge_id: EdgeID | None = None
+    origin_node_id: NodeID | None = None
+
+
+@dataclass(frozen=True)
+class DetectionState:
+    trigger_queue: tuple[QueuedTrigger, ...] = ()
