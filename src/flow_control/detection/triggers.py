@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from ..domain import EdgeID, Graph
+from .config import ResolvedConfig
 from .history import HistoryDigest
 from .observations import Observations
 from .state import DetectionState
@@ -19,6 +20,7 @@ def detect_normal_triggers(
     history_digest: HistoryDigest,
     previous_state: DetectionState,
     server_time: datetime,
+    config: ResolvedConfig,
 ) -> NormalTriggerDetectionResult:
     # TODO: impl
     return NormalTriggerDetectionResult(triggered_edges=(), new_state=previous_state)
