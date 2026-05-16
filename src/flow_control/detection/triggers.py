@@ -25,7 +25,9 @@ def detect_normal_triggers(
     server_time: datetime,
     config: ResolvedConfig,
 ) -> NormalTriggerDetectionResult:
-    for edge in graph.enabled_edges():
+    triggered_edges = [
+        edge.edge_id
+        for edge in graph.enabled_edges()
         if _evaluate_surge_trigger(
             edge.time_resolution_s,
             observations.observed_at,
@@ -34,10 +36,13 @@ def detect_normal_triggers(
             config.surge_rate_threshold_percent_per_min,
             config.surge_evaluate_window_minute,
             server_time,
-        ):
-            return NormalTriggerDetectionResult(
-                triggered_edges=(edge.edge_id,), new_state=previous_state
-            )
+        )
+    ]
+
+    if triggered_edges:
+        return NormalTriggerDetectionResult(
+            triggered_edges=tuple(triggered_edges), new_state=previous_state
+        )
 
     return NormalTriggerDetectionResult(triggered_edges=(), new_state=previous_state)
 
