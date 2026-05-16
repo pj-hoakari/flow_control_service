@@ -6,6 +6,7 @@ import pytest
 
 from flow_control.detection.config import ResolvedConfig
 from flow_control.detection.history import ArcWindowSeries
+from flow_control.detection.observations import ArcScalarFlow, Observations
 from flow_control.domain import (
     CurrentDirection,
     DirectionConstraint,
@@ -63,8 +64,14 @@ def surge_config() -> ResolvedConfig:
 
 
 @pytest.fixture
-def make_linear_window():
-    """``end_time`` 終点で ``step_minutes`` 間隔の線形サンプル列を生成する"""
+def make_linear_series():
+    """``ArcWindowSeries`` と ``Observations`` を合わせて 1 本の線形系列となる組を生成する
+
+    ``sample_count`` 件のサンプルを ``end_time`` を最終点として
+    ``step_minutes`` 間隔で配置する
+    系列の最終 1 件を ``Observations.arc_scalar_flows`` として、
+    残り ``sample_count - 1`` 件を ``ArcWindowSeries.samples`` として配置する
+    """
 
     def _make(
         edge_id: EdgeID,
@@ -74,21 +81,34 @@ def make_linear_window():
         start_value: float,
         slope_per_min: float,
         step_minutes: float = 1.0,
-    ) -> ArcWindowSeries:
-        samples: list[tuple[datetime, float]] = []
+    ) -> tuple[ArcWindowSeries, Observations]:
         span = (sample_count - 1) * step_minutes
         start_time = end_time - timedelta(minutes=span)
-        for i in range(sample_count):
+
+        history_samples: list[tuple[datetime, float]] = []
+        for i in range(sample_count - 1):
             t = start_time + timedelta(minutes=i * step_minutes)
             v = start_value + slope_per_min * (i * step_minutes)
-            samples.append((t, v))
-        return ArcWindowSeries(edge_id=edge_id, samples=tuple(samples))
+            history_samples.append((t, v))
+        window = ArcWindowSeries(edge_id=edge_id, samples=tuple(history_samples))
+
+        last_value = start_value + slope_per_min * span
+        observations = Observations(
+            observed_at=end_time,
+            arc_scalar_flows=(
+                ArcScalarFlow(edge_id=edge_id, observed_count=last_value),
+            ),
+        )
+
+        return window, observations
 
     return _make
 
 
 @pytest.fixture
-def make_flat_window(make_linear_window):
+def make_flat_series(make_linear_series):
+    """全サンプル同値で構成される線形系列の組 (``slope=0``) を生成する"""
+
     def _make(
         edge_id: EdgeID,
         *,
@@ -96,14 +116,34 @@ def make_flat_window(make_linear_window):
         sample_count: int,
         value: float,
         step_minutes: float = 1.0,
-    ) -> ArcWindowSeries:
-        return make_linear_window(
+    ) -> tuple[ArcWindowSeries, Observations]:
+        return make_linear_series(
             edge_id,
             end_time=end_time,
             sample_count=sample_count,
             start_value=value,
             slope_per_min=0.0,
             step_minutes=step_minutes,
+        )
+
+    return _make
+
+
+@pytest.fixture
+def make_scalar_observation():
+    """``observed_at`` 時点の単一 ``ArcScalarFlow`` を持つ ``Observations`` を生成する"""
+
+    def _make(
+        edge_id: EdgeID,
+        *,
+        observed_at: datetime,
+        observed_count: float,
+    ) -> Observations:
+        return Observations(
+            observed_at=observed_at,
+            arc_scalar_flows=(
+                ArcScalarFlow(edge_id=edge_id, observed_count=observed_count),
+            ),
         )
 
     return _make
