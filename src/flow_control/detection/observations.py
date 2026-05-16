@@ -53,3 +53,9 @@ class Observations:
             if arc_stagnation.edge_id == edge_id:
                 return arc_stagnation
         return None
+
+    def scalar_flow_of(self, edge_id: EdgeID) -> ArcScalarFlow | None:
+        for arc_scalar_flow in self.arc_scalar_flows:
+            if arc_scalar_flow.edge_id == edge_id:
+                return arc_scalar_flow
+        return None
