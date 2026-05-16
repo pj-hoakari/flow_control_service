@@ -1,32 +1,41 @@
-"""Common factories for Detection tests."""
+"""Common factories for Detection and Optimization tests."""
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from typing import Mapping
 
 import pytest
 
 from flow_control.models import (
     ArcFlow,
     ArcHistoryStat,
+    ArcScalarFlow,
     ArcStagnation,
     ArcWindowSeries,
+    Commodity,
     ConfidenceFlag,
     CurrentDirection,
     DetectionState,
+    DetourResult,
+    DetourSet,
     DirectionConstraint,
     Edge,
+    FallbackReport,
     FlowDirection,
+    ForecastResult,
     Graph,
     HistoryDigest,
     Node,
     NodeKind,
     Observations,
     ObservationType,
+    Path,
     Reference,
     ResolvedConfig,
     TenantCategory,
     TenantContext,
+    freeze_float_map,
 )
 
 
@@ -48,6 +57,8 @@ def make_edge(
     observation_type: ObservationType = ObservationType.VECTOR,
     direction_constraint: DirectionConstraint = DirectionConstraint.BIDIRECTIONAL_PRIOR,
     current_direction: CurrentDirection = CurrentDirection.BIDIRECTIONAL,
+    danger_flag: bool = False,
+    danger_capacity: float | None = None,
 ) -> Edge:
     return Edge(
         edge_id=edge_id,
@@ -57,6 +68,8 @@ def make_edge(
         current_direction=current_direction,
         enabled=enabled,
         observation_type=observation_type,
+        danger_flag=danger_flag,
+        danger_capacity=danger_capacity,
     )
 
 
@@ -127,11 +140,13 @@ def make_observations(
     observed_at: datetime,
     arc_stagnations: tuple[ArcStagnation, ...] = (),
     arc_flows: tuple[ArcFlow, ...] = (),
+    arc_scalar_flows: tuple[ArcScalarFlow, ...] = (),
 ) -> Observations:
     return Observations(
         observed_at=observed_at,
         arc_stagnations=arc_stagnations,
         arc_flows=arc_flows,
+        arc_scalar_flows=arc_scalar_flows,
     )
 
 
@@ -159,12 +174,112 @@ def linear_window(
     return ArcWindowSeries(edge_id=edge_id, samples=tuple(data))
 
 
+# ── Optimization 用ファクトリ・fixture ─────────────────────────
+
+
+def make_commodity(origin: str, destination: str, demand: float) -> Commodity:
+    return Commodity(
+        origin_node_id=origin, destination_node_id=destination, demand=demand
+    )
+
+
+def make_forecast_result(
+    *,
+    commodities: tuple[Commodity, ...] = (),
+    node_confidence: Mapping[str, float] | None = None,
+    arc_flow_sensitivity: Mapping[str, float] | None = None,
+    arc_baseline_stagnation: Mapping[str, float] | None = None,
+    fallback: FallbackReport | None = None,
+) -> ForecastResult:
+    return ForecastResult(
+        commodities=commodities,
+        node_confidence=freeze_float_map(node_confidence or {}),
+        arc_flow_sensitivity=freeze_float_map(arc_flow_sensitivity or {}),
+        arc_baseline_stagnation=freeze_float_map(arc_baseline_stagnation or {}),
+        fallback_usage=fallback or FallbackReport(),
+    )
+
+
+def make_path(
+    edge_ids: tuple[str, ...],
+    *,
+    total_length: float = 0.0,
+    contains_trigger: bool = False,
+) -> Path:
+    return Path(
+        edge_ids=edge_ids, total_length=total_length, contains_trigger=contains_trigger
+    )
+
+
+def make_detour_set(
+    origin_edge_id: str,
+    endpoint_pair: tuple[str, str],
+    paths: tuple[Path, ...],
+) -> DetourSet:
+    return DetourSet(
+        origin_edge_id=origin_edge_id,
+        endpoint_pair=endpoint_pair,
+        paths=paths,
+        k_effective=len(paths),
+    )
+
+
+def make_detour_result(sets: tuple[DetourSet, ...] = ()) -> DetourResult:
+    return DetourResult(detour_sets=sets)
+
+
+@pytest.fixture
+def line_graph_3() -> Graph:
+    """n1(boundary) - e1 - n2 - e2 - n3(boundary)"""
+    nodes = (
+        make_node("n1", is_boundary=True),
+        make_node("n2"),
+        make_node("n3", is_boundary=True),
+    )
+    edges = (
+        make_edge("e1", "n1", "n2"),
+        make_edge("e2", "n2", "n3"),
+    )
+    return Graph(nodes=nodes, edges=edges)
+
+
+@pytest.fixture
+def baseline_observations(base_time) -> Observations:
+    return make_observations(
+        observed_at=base_time,
+        arc_stagnations=(
+            ArcStagnation("e1", stagnation=10.0),
+            ArcStagnation("e2", stagnation=10.0),
+        ),
+    )
+
+
+@pytest.fixture
+def baseline_forecast() -> ForecastResult:
+    return make_forecast_result(
+        commodities=(make_commodity("n1", "n3", demand=1.0),),
+        arc_flow_sensitivity={"e1": 5.0, "e2": 5.0},
+        arc_baseline_stagnation={"e1": 10.0, "e2": 10.0},
+        node_confidence={"n1": 1.0, "n2": 1.0, "n3": 1.0},
+    )
+
+
+@pytest.fixture
+def empty_detour() -> DetourResult:
+    return make_detour_result()
+
+
 __all__ = [
     "make_node",
     "make_edge",
     "make_observations",
     "make_history",
     "linear_window",
+    "make_commodity",
+    "make_forecast_result",
+    "make_path",
+    "make_detour_set",
+    "make_detour_result",
     "ConfidenceFlag",
     "FlowDirection",
 ]

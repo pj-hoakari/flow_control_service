@@ -4,7 +4,10 @@ version = "0.1.0"
 description = "Flow control optimization service (Detection module PoC)"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "linopy>=0.3.13",
+    "highspy>=1.7.2",
+]
 
 [project.optional-dependencies]
 dev = [

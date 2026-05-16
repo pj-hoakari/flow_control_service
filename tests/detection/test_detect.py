@@ -99,7 +99,7 @@ def test_deterministic_for_same_input(
     hist = make_history(
         stats=(ArcHistoryStat("e1", 20.0, 10.0),),
     )
-    args = dict(
+    r1 = detect(
         graph=basic_graph,
         observations=obs,
         history_digest=hist,
@@ -110,6 +110,15 @@ def test_deterministic_for_same_input(
         config=baseline_config,
         server_time=base_time,
     )
-    r1 = detect(**args)
-    r2 = detect(**args)
+    r2 = detect(
+        graph=basic_graph,
+        observations=obs,
+        history_digest=hist,
+        previous_state=empty_state,
+        events=(),
+        references=empty_reference,
+        tenant_context=long_term_tenant,
+        config=baseline_config,
+        server_time=base_time,
+    )
     assert r1 == r2

@@ -1,0 +1,16 @@
+{
+  "include": ["src", "tests"],
+  "venvPath": ".",
+  "venv": ".venv",
+  "pythonVersion": "3.12",
+  "extraPaths": ["src"],
+  "typeCheckingMode": "standard",
+  "reportMissingParameterType": false,
+  "reportUnknownParameterType": false,
+  "reportUnknownMemberType": false,
+  "reportUnknownVariableType": false,
+  "reportUnknownArgumentType": false,
+  "reportAny": false,
+  "reportExplicitAny": false,
+  "reportUnusedCallResult": false
+}

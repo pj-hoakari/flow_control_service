@@ -97,7 +97,11 @@ def detect_normal_triggers(
             triggers.append(
                 QueuedTrigger(
                     kind=QueuedTriggerKind.HIGH_STAGNATION,
-                    first_fired_at=hs_outcome.new_watch.started_at if hs_outcome.new_watch else server_time,
+                    first_fired_at=(
+                        hs_outcome.new_watch.started_at
+                        if hs_outcome.new_watch and hs_outcome.new_watch.started_at is not None
+                        else server_time
+                    ),
                     last_fired_at=server_time,
                     accumulated_score=1.0,
                     snapshot_ref=observations.observed_at.isoformat(),
