@@ -5,8 +5,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from flow_control.detection.config import ResolvedConfig
-from flow_control.detection.history import ArcWindowSeries
-from flow_control.detection.observations import ArcScalarFlow, Observations
+from flow_control.detection.history import ArcHistoryStat, ArcWindowSeries, HistoryDigest
+from flow_control.detection.observations import ArcScalarFlow, ArcStagnation, Observations
 from flow_control.domain import (
     CurrentDirection,
     DirectionConstraint,
@@ -107,6 +107,19 @@ def surge_config() -> ResolvedConfig:
 
 
 @pytest.fixture
+def high_stagnation_config() -> ResolvedConfig:
+    """高停滞判定の閾値: M=5 分, beta=1.0
+
+    急増判定の閾値は十分に高く設定し、高停滞テストでは急増側が発火しないようにする
+    """
+    return ResolvedConfig(
+        surge_rate_threshold_percent_per_min=1_000.0,
+        high_stagnation_duration_min=5.0,
+        beta=1.0,
+    )
+
+
+@pytest.fixture
 def make_linear_series():
     """``ArcWindowSeries`` と ``ArcScalarFlow`` を合わせて 1 本の線形系列となる組を生成する
 
@@ -185,6 +198,51 @@ def make_scalar_observation():
             arc_scalar_flows=(
                 ArcScalarFlow(edge_id=edge_id, observed_count=observed_count),
             ),
+        )
+
+    return _make
+
+
+@pytest.fixture
+def make_stagnation_observation():
+    """``observed_at`` 時点の単一 ``ArcStagnation`` を持つ ``Observations`` を生成する"""
+
+    def _make(
+        edge_id: EdgeID,
+        *,
+        observed_at: datetime,
+        stagnation: float,
+    ) -> Observations:
+        return Observations(
+            observed_at=observed_at,
+            arc_stagnations=(
+                ArcStagnation(edge_id=edge_id, stagnation=stagnation),
+            ),
+        )
+
+    return _make
+
+
+@pytest.fixture
+def make_history_with_arc_stats():
+    """``ArcHistoryStat`` のみを束ねた ``HistoryDigest`` を組み立てる
+
+    各エントリは ``(edge_id, p90_stagnation, baseline_stagnation)`` のタプルで指定する
+    ``p90_stagnation`` / ``baseline_stagnation`` は ``None`` 可
+    """
+
+    def _make(
+        *stats: tuple[EdgeID, float | None, float | None],
+    ) -> HistoryDigest:
+        return HistoryDigest(
+            arc_stats=tuple(
+                ArcHistoryStat(
+                    edge_id=eid,
+                    p90_stagnation=p90,
+                    baseline_stagnation=baseline,
+                )
+                for (eid, p90, baseline) in stats
+            )
         )
 
     return _make
