@@ -12,19 +12,19 @@ EPSILON_FLOW = 1e-6
 
 
 @dataclass(frozen=True)
-class NormalTriggerDetectionResult:
+class MetricTriggerDetectionResult:
     triggered_edges: tuple[EdgeID, ...]
     new_state: DetectionState
 
 
-def detect_normal_triggers(
+def detect_metric_triggers(
     graph: Graph,
     observations: Observations,
     history_digest: HistoryDigest,
     previous_state: DetectionState,
     server_time: datetime,
     config: ResolvedConfig,
-) -> NormalTriggerDetectionResult:
+) -> MetricTriggerDetectionResult:
     triggered_edges: list[EdgeID] = []
     new_watch_states: list[ArcWatchState] = []
 
@@ -59,7 +59,7 @@ def detect_normal_triggers(
         arc_watch_states=tuple(new_watch_states),
     )
 
-    return NormalTriggerDetectionResult(
+    return MetricTriggerDetectionResult(
         triggered_edges=tuple(triggered_edges),
         new_state=new_state,
     )

@@ -18,7 +18,7 @@ from flow_control.detection.config import ResolvedConfig
 from flow_control.detection.history import HistoryDigest
 from flow_control.detection.observations import Observations
 from flow_control.detection.state import ArcWatchState, DetectionState
-from flow_control.detection.triggers import detect_normal_triggers
+from flow_control.detection.triggers import detect_metric_triggers
 from flow_control.domain import EdgeID, Graph
 
 
@@ -31,7 +31,7 @@ def _run(
     server_time: datetime,
     config: ResolvedConfig,
 ):
-    return detect_normal_triggers(
+    return detect_metric_triggers(
         graph=graph,
         observations=observations,
         history_digest=history,

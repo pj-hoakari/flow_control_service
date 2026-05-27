@@ -21,7 +21,7 @@ from flow_control.detection.config import ResolvedConfig
 from flow_control.detection.history import ArcWindowSeries, HistoryDigest
 from flow_control.detection.observations import Observations
 from flow_control.detection.state import DetectionState
-from flow_control.detection.triggers import detect_normal_triggers
+from flow_control.detection.triggers import detect_metric_triggers
 from flow_control.domain import EdgeID, Graph
 
 
@@ -33,7 +33,7 @@ def _run(
     server_time: datetime,
     config: ResolvedConfig,
 ):
-    return detect_normal_triggers(
+    return detect_metric_triggers(
         graph=graph,
         observations=observations,
         history_digest=history,
@@ -231,7 +231,7 @@ def test_surge_preserves_previous_state_queue(
     observations = Observations(observed_at=base_time, arc_scalar_flows=(scalar_flow,))
     previous = DetectionState()
 
-    result = detect_normal_triggers(
+    result = detect_metric_triggers(
         graph=basic_graph,
         observations=observations,
         history_digest=history,
