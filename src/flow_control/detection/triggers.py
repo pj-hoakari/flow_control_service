@@ -1,14 +1,42 @@
 import statistics
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from enum import Enum
 
-from ..domain import EdgeID, Graph
+from ..domain import EdgeID, Graph, NodeID
 from .config import ResolvedConfig
 from .history import ArcHistoryStat, ArcWindowSeries, HistoryDigest
 from .observations import ArcScalarFlow, ArcStagnation, Observations
 from .state import ArcWatchState, DetectionState
 
 EPSILON_FLOW = 1e-6
+
+_TARGET_PREFIX_EDGE = "edge:"
+_TARGET_PREFIX_NODE = "node:"
+
+
+class EventKind(str, Enum):
+    DANGER_FLAG_UP = "DANGER_FLAG_UP"
+    DANGER_FLAG_DOWN = "DANGER_FLAG_DOWN"
+    DIRECTION_SWITCH = "DIRECTION_SWITCH"
+    ADD_EDGE = "ADD_EDGE"
+    ADD_NODE = "ADD_NODE"
+    DISABLE = "DISABLE"
+    ENABLE = "ENABLE"
+    SCHEDULED_INFLOW = "SCHEDULED_INFLOW"
+    SCHEDULED_ATTR_CHANGE = "SCHEDULED_ATTR_CHANGE"
+
+
+@dataclass(frozen=True)
+class Event:
+    """
+    ``"edge:<edge_id>"``: アーク対象
+    ``"node:<node_id>"``: ノード対象
+    """
+
+    kind: EventKind
+    target_id: str
+    occurred_at: datetime
 
 
 @dataclass(frozen=True)
@@ -179,4 +207,38 @@ def _evaluate_high_stagnation_trigger(
         percentile_breached=percentile_breached,
         delta_breached=delta_breached,
         started_at=server_time,
+    )
+
+
+@dataclass(frozen=True)
+class ManualTriggerDetectionResult:
+    triggered_edges: tuple[EdgeID, ...]
+    triggered_nodes: tuple[NodeID, ...]
+
+
+def detect_manual_triggers(
+    events: tuple[Event, ...],
+) -> ManualTriggerDetectionResult:
+    triggered_edges: list[EdgeID] = []
+    triggered_nodes: list[NodeID] = []
+    seen_edges: set[EdgeID] = set()
+    seen_nodes: set[NodeID] = set()
+
+    for event in events:
+        if event.kind != EventKind.DANGER_FLAG_UP:
+            continue
+        if event.target_id.startswith(_TARGET_PREFIX_EDGE):
+            edge_id = EdgeID(event.target_id[len(_TARGET_PREFIX_EDGE) :])
+            if edge_id not in seen_edges:
+                seen_edges.add(edge_id)
+                triggered_edges.append(edge_id)
+        elif event.target_id.startswith(_TARGET_PREFIX_NODE):
+            node_id = NodeID(event.target_id[len(_TARGET_PREFIX_NODE) :])
+            if node_id not in seen_nodes:
+                seen_nodes.add(node_id)
+                triggered_nodes.append(node_id)
+
+    return ManualTriggerDetectionResult(
+        triggered_edges=tuple(triggered_edges),
+        triggered_nodes=tuple(triggered_nodes),
     )
