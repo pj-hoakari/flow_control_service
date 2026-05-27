@@ -4,9 +4,9 @@ from datetime import datetime, timedelta
 
 from ..domain import EdgeID, Graph
 from .config import ResolvedConfig
-from .history import ArcWindowSeries, HistoryDigest
-from .observations import ArcScalarFlow, Observations
-from .state import DetectionState
+from .history import ArcHistoryStat, ArcWindowSeries, HistoryDigest
+from .observations import ArcScalarFlow, ArcStagnation, Observations
+from .state import ArcWatchState, DetectionState
 
 EPSILON_FLOW = 1e-6
 
@@ -25,10 +25,11 @@ def detect_normal_triggers(
     server_time: datetime,
     config: ResolvedConfig,
 ) -> NormalTriggerDetectionResult:
-    triggered_edges = [
-        edge.edge_id
-        for edge in graph.enabled_edges()
-        if _evaluate_surge_trigger(
+    triggered_edges: list[EdgeID] = []
+    new_watch_states: list[ArcWatchState] = []
+
+    for edge in graph.enabled_edges():
+        surge_fired = _evaluate_surge_trigger(
             edge.time_resolution_s,
             observations.observed_at,
             observations.scalar_flow_of(edge.edge_id),
@@ -37,14 +38,31 @@ def detect_normal_triggers(
             config.surge_evaluate_window_minute,
             server_time,
         )
-    ]
 
-    if triggered_edges:
-        return NormalTriggerDetectionResult(
-            triggered_edges=tuple(triggered_edges), new_state=previous_state
+        stagnation_fired, next_watch = _evaluate_high_stagnation_trigger(
+            edge.edge_id,
+            observations.stagnation_of(edge.edge_id),
+            history_digest.stat_of(edge.edge_id),
+            previous_state.watch_state_of(edge.edge_id),
+            config.high_stagnation_duration_min,
+            config.beta,
+            server_time,
         )
 
-    return NormalTriggerDetectionResult(triggered_edges=(), new_state=previous_state)
+        if surge_fired or stagnation_fired:
+            triggered_edges.append(edge.edge_id)
+        if next_watch is not None:
+            new_watch_states.append(next_watch)
+
+    new_state = DetectionState(
+        trigger_queue=previous_state.trigger_queue,
+        arc_watch_states=tuple(new_watch_states),
+    )
+
+    return NormalTriggerDetectionResult(
+        triggered_edges=tuple(triggered_edges),
+        new_state=new_state,
+    )
 
 
 def _evaluate_surge_trigger(
@@ -91,3 +109,74 @@ def _evaluate_surge_trigger(
         return True
 
     return False
+
+
+def _evaluate_high_stagnation_trigger(
+    edge_id: EdgeID,
+    observed_stagnation: ArcStagnation | None,
+    history_stat: ArcHistoryStat | None,
+    previous_watch: ArcWatchState | None,
+    high_stagnation_duration_min: float,
+    beta: float,
+    server_time: datetime,
+) -> tuple[bool, ArcWatchState | None]:
+    if observed_stagnation is None or history_stat is None:
+        return False, previous_watch
+
+    stagnation = observed_stagnation.stagnation
+    p90 = history_stat.p90_stagnation
+    baseline = history_stat.baseline_stagnation
+
+    percentile_breached = p90 is not None and stagnation >= p90
+    delta_breached = baseline is not None and (stagnation - baseline) >= beta
+
+    if not percentile_breached and not delta_breached:
+        return False, None
+
+    if percentile_breached and delta_breached:
+        prev_both_breached = (
+            previous_watch is not None
+            and previous_watch.percentile_breached
+            and previous_watch.delta_breached
+            and previous_watch.started_at is not None
+        )
+        if prev_both_breached:
+            assert previous_watch is not None and previous_watch.started_at is not None
+            elapsed_minutes = (
+                server_time - previous_watch.started_at
+            ).total_seconds() / 60.0
+            if elapsed_minutes >= high_stagnation_duration_min:
+                return True, None
+            return False, ArcWatchState(
+                edge_id=edge_id,
+                percentile_breached=True,
+                delta_breached=True,
+                started_at=previous_watch.started_at,
+            )
+        return False, ArcWatchState(
+            edge_id=edge_id,
+            percentile_breached=True,
+            delta_breached=True,
+            started_at=server_time,
+        )
+
+    same_partial_configuration = (
+        previous_watch is not None
+        and previous_watch.percentile_breached == percentile_breached
+        and previous_watch.delta_breached == delta_breached
+        and previous_watch.started_at is not None
+    )
+    if same_partial_configuration:
+        assert previous_watch is not None
+        return False, ArcWatchState(
+            edge_id=edge_id,
+            percentile_breached=percentile_breached,
+            delta_breached=delta_breached,
+            started_at=previous_watch.started_at,
+        )
+    return False, ArcWatchState(
+        edge_id=edge_id,
+        percentile_breached=percentile_breached,
+        delta_breached=delta_breached,
+        started_at=server_time,
+    )

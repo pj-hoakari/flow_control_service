@@ -21,5 +21,20 @@ class QueuedTrigger:
 
 
 @dataclass(frozen=True)
+class ArcWatchState:
+    edge_id: EdgeID
+    percentile_breached: bool = False
+    delta_breached: bool = False
+    started_at: datetime | None = None
+
+
+@dataclass(frozen=True)
 class DetectionState:
     trigger_queue: tuple[QueuedTrigger, ...] = ()
+    arc_watch_states: tuple[ArcWatchState, ...] = ()
+
+    def watch_state_of(self, edge_id: EdgeID) -> ArcWatchState | None:
+        for watch in self.arc_watch_states:
+            if watch.edge_id == edge_id:
+                return watch
+        return None
