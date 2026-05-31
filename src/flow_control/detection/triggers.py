@@ -587,3 +587,35 @@ def update_retrigger_counts(
         )
 
     return tuple(entries.values())
+
+
+def apply_danger_flag_down(
+    previous_state: DetectionState,
+    events: tuple[Event, ...],
+) -> DetectionState:
+    # DANGER_FLAG_DOWN を受けたアークの既存の再発火カウントリセット
+    # 立ち下げ自体は発火扱いとしない
+    # クールタイムリセットも行わない
+    cleared_edges = {
+        EdgeID(event.target_id[len(_TARGET_PREFIX_EDGE) :])
+        for event in events
+        if event.kind == EventKind.DANGER_FLAG_DOWN
+        and event.target_id.startswith(_TARGET_PREFIX_EDGE)
+    }
+    if not cleared_edges:
+        return previous_state
+
+    changed = False
+    updated: list[RetriggerEntry] = []
+    for entry in previous_state.arc_retrigger_counts:
+        if entry.edge_id in cleared_edges and (entry.count or entry.quiet_cycles):
+            updated.append(
+                RetriggerEntry(edge_id=entry.edge_id, last_fired_at=entry.last_fired_at)
+            )
+            changed = True
+        else:
+            updated.append(entry)
+
+    if not changed:
+        return previous_state
+    return replace(previous_state, arc_retrigger_counts=tuple(updated))

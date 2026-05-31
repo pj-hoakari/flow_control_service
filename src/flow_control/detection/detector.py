@@ -11,6 +11,7 @@ from .triggers import (
     FiredTrigger,
     VerdictHint,
     all_targets_in_warmup,
+    apply_danger_flag_down,
     apply_scheduled_events,
     apply_warmup_events,
     detect_manual_triggers,
@@ -43,6 +44,8 @@ def detect(
     state = apply_warmup_events(previous_state, events, server_time, config)
     # イベント適用: SCHEDULED_* でクールタイムをリセット（キューは保持）
     state = apply_scheduled_events(state, events)
+    # イベント適用: DANGER_FLAG_DOWN で当該アークの既存再発火カウントをリセット
+    state = apply_danger_flag_down(state, events)
 
     # 全対象がウォームアップ中かつ危険フラグなしなら検知をスキップ
     if all_targets_in_warmup(state, graph, server_time) and not has_danger_event(
