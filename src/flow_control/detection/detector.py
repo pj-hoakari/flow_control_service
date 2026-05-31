@@ -10,9 +10,12 @@ from .triggers import (
     Event,
     FiredTrigger,
     VerdictHint,
+    all_targets_in_warmup,
+    apply_warmup_events,
     detect_manual_triggers,
     detect_metric_triggers,
     evaluate_cooldown,
+    has_danger_event,
 )
 
 
@@ -34,11 +37,26 @@ def detect(
     config: ResolvedConfig,
     server_time: datetime,
 ) -> DetectionResult:
+    # イベント適用: ENABLE/ADD_* で対象別ウォームアップを設定
+    state = apply_warmup_events(previous_state, events, server_time, config)
+
+    # 全対象がウォームアップ中かつ危険フラグなしなら検知をスキップ
+    if all_targets_in_warmup(state, graph, server_time) and not has_danger_event(
+        events
+    ):
+        return DetectionResult(
+            verdict_hint=VerdictHint.SKIPPED_WARMUP,
+            triggered_edges=(),
+            triggered_nodes=(),
+            effective_snapshot=observations,
+            new_state=state,
+        )
+
     metric_result = detect_metric_triggers(
         graph=graph,
         observations=observations,
         history_digest=history_digest,
-        previous_state=previous_state,
+        previous_state=state,
         server_time=server_time,
         config=config,
     )

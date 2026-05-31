@@ -30,10 +30,17 @@ class ArcWatchState:
 
 
 @dataclass(frozen=True)
+class WarmupState:
+    target_key: str  # "edge:<id>" / "node:<id>"
+    until: datetime
+
+
+@dataclass(frozen=True)
 class DetectionState:
     cooldown_until: datetime | None = None
     trigger_queue: tuple[QueuedTrigger, ...] = ()
     arc_watch_states: tuple[ArcWatchState, ...] = ()
+    warmup_states: tuple[WarmupState, ...] = ()
 
     def watch_state_of(self, edge_id: EdgeID) -> ArcWatchState | None:
         for watch in self.arc_watch_states:
@@ -43,3 +50,13 @@ class DetectionState:
 
     def is_in_cooldown(self, server_time: datetime) -> bool:
         return self.cooldown_until is not None and server_time < self.cooldown_until
+
+    def warmup_until_of(self, target_key: str) -> datetime | None:
+        for warmup in self.warmup_states:
+            if warmup.target_key == target_key:
+                return warmup.until
+        return None
+
+    def is_in_warmup(self, target_key: str, server_time: datetime) -> bool:
+        until = self.warmup_until_of(target_key)
+        return until is not None and server_time < until

@@ -11,3 +11,5 @@ class ResolvedConfig:
     cooldown_duration_min: float = 60.0
     queue_score_threshold: float = 5.0
     queue_diversity_threshold: int = 3
+
+    warmup_duration_min: float = 60.0

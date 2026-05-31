@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import statistics
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from enum import Enum
 
@@ -9,7 +9,13 @@ from ..domain import EdgeID, Graph, NodeID
 from .config import ResolvedConfig
 from .history import ArcHistoryStat, ArcWindowSeries, HistoryDigest
 from .observations import ArcScalarFlow, ArcStagnation, Observations
-from .state import ArcWatchState, DetectionState, QueuedTrigger, QueuedTriggerKind
+from .state import (
+    ArcWatchState,
+    DetectionState,
+    QueuedTrigger,
+    QueuedTriggerKind,
+    WarmupState,
+)
 
 EPSILON_FLOW = 1e-6
 
@@ -61,6 +67,10 @@ def detect_metric_triggers(
     new_watch_states: list[ArcWatchState] = []
 
     for edge in graph.enabled_edges():
+        # ウォームアップ中の対象はトリガー判定を停止
+        if previous_state.is_in_warmup(_edge_target_key(edge.edge_id), server_time):
+            continue
+
         surge_fired = _evaluate_surge_trigger(
             edge.time_resolution_s,
             observations.observed_at,
@@ -102,11 +112,7 @@ def detect_metric_triggers(
         if next_watch is not None:
             new_watch_states.append(next_watch)
 
-    new_state = DetectionState(
-        cooldown_until=previous_state.cooldown_until,
-        trigger_queue=previous_state.trigger_queue,
-        arc_watch_states=tuple(new_watch_states),
-    )
+    new_state = replace(previous_state, arc_watch_states=tuple(new_watch_states))
 
     return MetricTriggerDetectionResult(
         triggered_edges=tuple(triggered_edges),
@@ -323,11 +329,7 @@ def evaluate_cooldown(
             ):
                 # スコア超過 or 多様性超過
                 return _fire(previous_state, server_time, config, merged_queue)
-            queued_state = DetectionState(
-                cooldown_until=previous_state.cooldown_until,
-                trigger_queue=merged_queue,
-                arc_watch_states=previous_state.arc_watch_states,
-            )
+            queued_state = replace(previous_state, trigger_queue=merged_queue)
             return CooldownDecision(VerdictHint.QUEUED, (), (), queued_state)
         # クールタイム中，トリガーなし
         return CooldownDecision(VerdictHint.SKIPPED_COOLDOWN, (), (), previous_state)
@@ -353,11 +355,7 @@ def _fire(
     triggered_edges = _distinct_origin_edges(origin_sources)
     triggered_nodes = _distinct_origin_nodes(origin_sources)
     cooldown_until = server_time + timedelta(minutes=config.cooldown_duration_min)
-    new_state = DetectionState(
-        cooldown_until=cooldown_until,
-        trigger_queue=(),
-        arc_watch_states=previous_state.arc_watch_states,
-    )
+    new_state = replace(previous_state, cooldown_until=cooldown_until, trigger_queue=())
     return CooldownDecision(
         VerdictHint.TRIGGERED, triggered_edges, triggered_nodes, new_state
     )
@@ -444,3 +442,59 @@ def _distinct_origin_nodes(
                 seen.add(node_id)
                 ordered.append(node_id)
     return tuple(ordered)
+
+
+def _edge_target_key(edge_id: EdgeID) -> str:
+    return f"{_TARGET_PREFIX_EDGE}{edge_id.value}"
+
+
+def _node_target_key(node_id: NodeID) -> str:
+    return f"{_TARGET_PREFIX_NODE}{node_id.value}"
+
+
+# 新規登場／有効化でウォームアップを開始するイベント種別
+_WARMUP_EVENT_KINDS = (
+    EventKind.ENABLE,
+    EventKind.ADD_EDGE,
+    EventKind.ADD_NODE,
+)
+
+
+def apply_warmup_events(
+    previous_state: DetectionState,
+    events: tuple[Event, ...],
+    server_time: datetime,
+    config: ResolvedConfig,
+) -> DetectionState:
+    # ENABLE/ADD_* を受けた対象に server_time + warmup_duration を設定
+    warmup_until = server_time + timedelta(minutes=config.warmup_duration_min)
+    warmup_map = {w.target_key: w.until for w in previous_state.warmup_states}
+    for event in events:
+        if event.kind in _WARMUP_EVENT_KINDS:
+            warmup_map[event.target_id] = warmup_until
+
+    if warmup_map == {w.target_key: w.until for w in previous_state.warmup_states}:
+        return previous_state
+
+    warmup_states = tuple(
+        WarmupState(target_key=key, until=until) for key, until in warmup_map.items()
+    )
+    return replace(previous_state, warmup_states=warmup_states)
+
+
+def all_targets_in_warmup(
+    state: DetectionState,
+    graph: Graph,
+    server_time: datetime,
+) -> bool:
+    # 有効なアーク・ノード全対象がウォームアップ中か
+    # 対象ゼロは False
+    target_keys = [_edge_target_key(e.edge_id) for e in graph.enabled_edges()]
+    target_keys += [_node_target_key(n.node_id) for n in graph.enabled_nodes()]
+    if not target_keys:
+        return False
+    return all(state.is_in_warmup(key, server_time) for key in target_keys)
+
+
+def has_danger_event(events: tuple[Event, ...]) -> bool:
+    return any(event.kind == EventKind.DANGER_FLAG_UP for event in events)
