@@ -2,11 +2,11 @@
 
 ## 設計ドキュメントの参照
 
-本リポジトリにおける開発は，別リポジトリ `KasumiMercury/pj34-poc-root` の `design/flow_control/` 配下にある設計ドキュメント群を上位仕様として参照し，それに基づいて行う
+本リポジトリにおける開発は，別リポジトリ `pj-hoakari/hoakari-root` の `design/flow_control/` 配下にある設計ドキュメント群を上位仕様として参照し，それに基づいて行う
 
 ### 参照先
 
-- リポジトリ: [`KasumiMercury/pj34-poc-root`](https://github.com/KasumiMercury/pj34-poc-root)
+- リポジトリ: [pj-hoakari/hoakari-root](https://github.com/pj-hoakari/hoakari-root)
 - ディレクトリ: `design/flow_control/`
 
 ### 設計ドキュメント一覧（v1）
