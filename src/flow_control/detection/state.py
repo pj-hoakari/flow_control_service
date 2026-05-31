@@ -16,6 +16,7 @@ class QueuedTrigger:
     kind: QueuedTriggerKind
     first_fired_at: datetime
     last_fired_at: datetime
+    accumulated_score: float = 0.0
     origin_edge_id: EdgeID | None = None
     origin_node_id: NodeID | None = None
 
@@ -30,6 +31,7 @@ class ArcWatchState:
 
 @dataclass(frozen=True)
 class DetectionState:
+    cooldown_until: datetime | None = None
     trigger_queue: tuple[QueuedTrigger, ...] = ()
     arc_watch_states: tuple[ArcWatchState, ...] = ()
 
@@ -38,3 +40,6 @@ class DetectionState:
             if watch.edge_id == edge_id:
                 return watch
         return None
+
+    def is_in_cooldown(self, server_time: datetime) -> bool:
+        return self.cooldown_until is not None and server_time < self.cooldown_until

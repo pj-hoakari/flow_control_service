@@ -7,7 +7,7 @@ from ..domain import EdgeID, Graph, NodeID
 from .config import ResolvedConfig
 from .history import ArcHistoryStat, ArcWindowSeries, HistoryDigest
 from .observations import ArcScalarFlow, ArcStagnation, Observations
-from .state import ArcWatchState, DetectionState
+from .state import ArcWatchState, DetectionState, QueuedTrigger, QueuedTriggerKind
 
 EPSILON_FLOW = 1e-6
 
@@ -83,6 +83,7 @@ def detect_metric_triggers(
             new_watch_states.append(next_watch)
 
     new_state = DetectionState(
+        cooldown_until=previous_state.cooldown_until,
         trigger_queue=previous_state.trigger_queue,
         arc_watch_states=tuple(new_watch_states),
     )
@@ -242,3 +243,183 @@ def detect_manual_triggers(
         triggered_edges=tuple(triggered_edges),
         triggered_nodes=tuple(triggered_nodes),
     )
+
+
+class VerdictHint(str, Enum):
+    TRIGGERED = "TRIGGERED"
+    QUEUED = "QUEUED"
+    SKIPPED_COOLDOWN = "SKIPPED_COOLDOWN"
+    SKIPPED_WARMUP = "SKIPPED_WARMUP"
+    NO_TRIGGER = "NO_TRIGGER"
+
+
+@dataclass(frozen=True)
+class FiredTrigger:
+    kind: QueuedTriggerKind
+    fired_at: datetime
+    origin_edge_id: EdgeID | None = None
+    origin_node_id: NodeID | None = None
+    score: float = 1.0
+
+
+@dataclass(frozen=True)
+class CooldownDecision:
+    verdict: VerdictHint
+    triggered_edges: tuple[EdgeID, ...]
+    triggered_nodes: tuple[NodeID, ...]
+    new_state: DetectionState
+
+
+def evaluate_cooldown(
+    previous_state: DetectionState,
+    fired_triggers: tuple[FiredTrigger, ...],
+    server_time: datetime,
+    config: ResolvedConfig,
+) -> CooldownDecision:
+    danger_triggers = tuple(
+        t for t in fired_triggers if t.kind == QueuedTriggerKind.DANGER
+    )
+    normal_triggers = tuple(
+        t for t in fired_triggers if t.kind != QueuedTriggerKind.DANGER
+    )
+
+    if previous_state.is_in_cooldown(server_time):
+        if danger_triggers:
+            # 危険フラグはクールタイム中でも即時発火
+            return _fire(
+                previous_state,
+                server_time,
+                config,
+                previous_state.trigger_queue,
+                fired_triggers,
+            )
+        if normal_triggers:
+            merged_queue = _merge_into_queue(
+                previous_state.trigger_queue, normal_triggers
+            )
+            if _queue_exceeds_score(merged_queue, config) or _queue_is_diverse(
+                merged_queue, config
+            ):
+                # スコア超過 or 多様性超過
+                return _fire(previous_state, server_time, config, merged_queue)
+            queued_state = DetectionState(
+                cooldown_until=previous_state.cooldown_until,
+                trigger_queue=merged_queue,
+                arc_watch_states=previous_state.arc_watch_states,
+            )
+            return CooldownDecision(VerdictHint.QUEUED, (), (), queued_state)
+        # クールタイム中，トリガーなし
+        return CooldownDecision(VerdictHint.SKIPPED_COOLDOWN, (), (), previous_state)
+
+    # クールタイム外，トリガーがあれば発火，なければ未検出
+    if fired_triggers:
+        return _fire(
+            previous_state,
+            server_time,
+            config,
+            previous_state.trigger_queue,
+            fired_triggers,
+        )
+    return CooldownDecision(VerdictHint.NO_TRIGGER, (), (), previous_state)
+
+
+def _fire(
+    previous_state: DetectionState,
+    server_time: datetime,
+    config: ResolvedConfig,
+    *origin_sources: tuple[object, ...],
+) -> CooldownDecision:
+    triggered_edges = _distinct_origin_edges(origin_sources)
+    triggered_nodes = _distinct_origin_nodes(origin_sources)
+    cooldown_until = server_time + timedelta(minutes=config.cooldown_duration_min)
+    new_state = DetectionState(
+        cooldown_until=cooldown_until,
+        trigger_queue=(),
+        arc_watch_states=previous_state.arc_watch_states,
+    )
+    return CooldownDecision(
+        VerdictHint.TRIGGERED, triggered_edges, triggered_nodes, new_state
+    )
+
+
+def _merge_into_queue(
+    queue: tuple[QueuedTrigger, ...],
+    normal_triggers: tuple[FiredTrigger, ...],
+) -> tuple[QueuedTrigger, ...]:
+    merged: list[QueuedTrigger] = list(queue)
+    for trigger in normal_triggers:
+        index = _find_same_route(merged, trigger)
+        if index is None:
+            merged.append(
+                QueuedTrigger(
+                    kind=trigger.kind,
+                    first_fired_at=trigger.fired_at,
+                    last_fired_at=trigger.fired_at,
+                    accumulated_score=trigger.score,
+                    origin_edge_id=trigger.origin_edge_id,
+                    origin_node_id=trigger.origin_node_id,
+                )
+            )
+        else:
+            existing = merged[index]
+            merged[index] = QueuedTrigger(
+                kind=existing.kind,
+                first_fired_at=existing.first_fired_at,
+                last_fired_at=trigger.fired_at,
+                accumulated_score=existing.accumulated_score + trigger.score,
+                origin_edge_id=existing.origin_edge_id,
+                origin_node_id=existing.origin_node_id,
+            )
+    return tuple(merged)
+
+
+def _find_same_route(queue: list[QueuedTrigger], trigger: FiredTrigger) -> int | None:
+    for index, entry in enumerate(queue):
+        if (
+            entry.origin_edge_id == trigger.origin_edge_id
+            and entry.origin_node_id == trigger.origin_node_id
+        ):
+            return index
+    return None
+
+
+def _queue_exceeds_score(
+    queue: tuple[QueuedTrigger, ...], config: ResolvedConfig
+) -> bool:
+    total = sum(entry.accumulated_score for entry in queue)
+    return total > config.queue_score_threshold
+
+
+def _queue_is_diverse(queue: tuple[QueuedTrigger, ...], config: ResolvedConfig) -> bool:
+    distinct_edges = {
+        entry.origin_edge_id for entry in queue if entry.origin_edge_id is not None
+    }
+    return len(distinct_edges) > config.queue_diversity_threshold
+
+
+def _distinct_origin_edges(
+    origin_sources: tuple[tuple[object, ...], ...],
+) -> tuple[EdgeID, ...]:
+    seen: set[EdgeID] = set()
+    ordered: list[EdgeID] = []
+    for source in origin_sources:
+        for item in source:
+            edge_id = getattr(item, "origin_edge_id", None)
+            if edge_id is not None and edge_id not in seen:
+                seen.add(edge_id)
+                ordered.append(edge_id)
+    return tuple(ordered)
+
+
+def _distinct_origin_nodes(
+    origin_sources: tuple[tuple[object, ...], ...],
+) -> tuple[NodeID, ...]:
+    seen: set[NodeID] = set()
+    ordered: list[NodeID] = []
+    for source in origin_sources:
+        for item in source:
+            node_id = getattr(item, "origin_node_id", None)
+            if node_id is not None and node_id not in seen:
+                seen.add(node_id)
+                ordered.append(node_id)
+    return tuple(ordered)
