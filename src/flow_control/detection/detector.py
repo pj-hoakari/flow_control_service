@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 
 from ..domain.graph import EdgeID, Graph, NodeID
@@ -17,6 +17,7 @@ from .triggers import (
     detect_metric_triggers,
     evaluate_cooldown,
     has_danger_event,
+    update_retrigger_counts,
 )
 
 
@@ -64,6 +65,17 @@ def detect(
         config=config,
     )
 
+    # 再発火カウントを更新
+    # metricトリガーのみを対象とする
+    retrigger_counts = update_retrigger_counts(
+        previous_counts=metric_result.new_state.arc_retrigger_counts,
+        graph=graph,
+        normal_trigger_edges=metric_result.triggered_edges,
+        watch_states=metric_result.new_state.arc_watch_states,
+        server_time=server_time,
+        config=config,
+    )
+
     manual_result = detect_manual_triggers(events=events)
     danger_triggers = tuple(
         FiredTrigger(
@@ -88,10 +100,12 @@ def detect(
         config=config,
     )
 
+    new_state = replace(decision.new_state, arc_retrigger_counts=retrigger_counts)
+
     return DetectionResult(
         verdict_hint=decision.verdict,
         triggered_edges=decision.triggered_edges,
         triggered_nodes=decision.triggered_nodes,
         effective_snapshot=observations,
-        new_state=decision.new_state,
+        new_state=new_state,
     )

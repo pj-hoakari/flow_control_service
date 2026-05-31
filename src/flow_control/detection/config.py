@@ -13,3 +13,6 @@ class ResolvedConfig:
     queue_diversity_threshold: int = 3
 
     warmup_duration_min: float = 60.0
+
+    retrigger_warning_threshold: int = 3
+    retrigger_reset_quiet_cycles: int = 3

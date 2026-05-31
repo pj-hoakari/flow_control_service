@@ -14,6 +14,7 @@ from .state import (
     DetectionState,
     QueuedTrigger,
     QueuedTriggerKind,
+    RetriggerEntry,
     WarmupState,
 )
 
@@ -516,3 +517,73 @@ def all_targets_in_warmup(
 
 def has_danger_event(events: tuple[Event, ...]) -> bool:
     return any(event.kind == EventKind.DANGER_FLAG_UP for event in events)
+
+
+def update_retrigger_counts(
+    previous_counts: tuple[RetriggerEntry, ...],
+    graph: Graph,
+    normal_trigger_edges: tuple[EdgeID, ...],
+    watch_states: tuple[ArcWatchState, ...],
+    server_time: datetime,
+    config: ResolvedConfig,
+) -> tuple[RetriggerEntry, ...]:
+    # 再発火カウントのリセット
+    # 手動トリガーはカウント対象外
+    fired_edges = list(dict.fromkeys(normal_trigger_edges))  # 出現順・重複排除
+    fired_set = set(fired_edges)
+    watched = {
+        watch.edge_id
+        for watch in watch_states
+        if watch.percentile_breached or watch.delta_breached
+    }
+    enabled_edges = {edge.edge_id for edge in graph.enabled_edges()}
+
+    entries: dict[EdgeID, RetriggerEntry] = {}
+    for entry in previous_counts:
+        edge_id = entry.edge_id
+        if edge_id not in enabled_edges:
+            # グラフ削除／無効化 → エントリ削除
+            continue
+
+        fired_this_cycle = edge_id in fired_set
+        different_origin = bool(fired_set - {edge_id})
+
+        if different_origin and not fired_this_cycle:
+            # 別アーク起点発火 → 当該アークのカウントをリセット
+            entries[edge_id] = RetriggerEntry(
+                edge_id=edge_id, last_fired_at=entry.last_fired_at
+            )
+        elif not fired_this_cycle and edge_id not in watched:
+            quiet_cycles = entry.quiet_cycles + 1
+            if quiet_cycles >= config.retrigger_reset_quiet_cycles:
+                # 連続沈静化 → リセット
+                entries[edge_id] = RetriggerEntry(
+                    edge_id=edge_id, last_fired_at=entry.last_fired_at
+                )
+            else:
+                entries[edge_id] = RetriggerEntry(
+                    edge_id=edge_id,
+                    count=entry.count,
+                    quiet_cycles=quiet_cycles,
+                    last_fired_at=entry.last_fired_at,
+                )
+        elif fired_this_cycle:
+            entries[edge_id] = RetriggerEntry(
+                edge_id=edge_id,
+                count=entry.count + 1,
+                quiet_cycles=0,
+                last_fired_at=server_time,
+            )
+        else:
+            # 発火せず警戒中かつ別起点発火なし → カウント維持
+            entries[edge_id] = entry
+
+    # 初回発火のアーク（既存エントリなし）は count=1 で登録
+    for edge_id in fired_edges:
+        if edge_id in entries or edge_id not in enabled_edges:
+            continue
+        entries[edge_id] = RetriggerEntry(
+            edge_id=edge_id, count=1, quiet_cycles=0, last_fired_at=server_time
+        )
+
+    return tuple(entries.values())

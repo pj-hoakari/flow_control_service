@@ -36,16 +36,31 @@ class WarmupState:
 
 
 @dataclass(frozen=True)
+class RetriggerEntry:
+    edge_id: EdgeID
+    count: int = 0  # 同一アーク起点の連続発火カウント
+    quiet_cycles: int = 0  # 沈静化が続いたサイクル数
+    last_fired_at: datetime | None = None
+
+
+@dataclass(frozen=True)
 class DetectionState:
     cooldown_until: datetime | None = None
     trigger_queue: tuple[QueuedTrigger, ...] = ()
     arc_watch_states: tuple[ArcWatchState, ...] = ()
     warmup_states: tuple[WarmupState, ...] = ()
+    arc_retrigger_counts: tuple[RetriggerEntry, ...] = ()
 
     def watch_state_of(self, edge_id: EdgeID) -> ArcWatchState | None:
         for watch in self.arc_watch_states:
             if watch.edge_id == edge_id:
                 return watch
+        return None
+
+    def retrigger_entry_of(self, edge_id: EdgeID) -> RetriggerEntry | None:
+        for entry in self.arc_retrigger_counts:
+            if entry.edge_id == edge_id:
+                return entry
         return None
 
     def is_in_cooldown(self, server_time: datetime) -> bool:
