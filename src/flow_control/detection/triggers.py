@@ -482,6 +482,24 @@ def apply_warmup_events(
     return replace(previous_state, warmup_states=warmup_states)
 
 
+# 状態変化としてクールタイムをリセットするスケジュールイベント種別
+_SCHEDULED_EVENT_KINDS = (
+    EventKind.SCHEDULED_INFLOW,
+    EventKind.SCHEDULED_ATTR_CHANGE,
+)
+
+
+def apply_scheduled_events(
+    previous_state: DetectionState,
+    events: tuple[Event, ...],
+) -> DetectionState:
+    # スケジュールイベントはクールタイムをリセットする，キューは保持
+    has_scheduled = any(event.kind in _SCHEDULED_EVENT_KINDS for event in events)
+    if not has_scheduled or previous_state.cooldown_until is None:
+        return previous_state
+    return replace(previous_state, cooldown_until=None)
+
+
 def all_targets_in_warmup(
     state: DetectionState,
     graph: Graph,

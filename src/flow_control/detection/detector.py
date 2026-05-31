@@ -11,6 +11,7 @@ from .triggers import (
     FiredTrigger,
     VerdictHint,
     all_targets_in_warmup,
+    apply_scheduled_events,
     apply_warmup_events,
     detect_manual_triggers,
     detect_metric_triggers,
@@ -39,6 +40,8 @@ def detect(
 ) -> DetectionResult:
     # イベント適用: ENABLE/ADD_* で対象別ウォームアップを設定
     state = apply_warmup_events(previous_state, events, server_time, config)
+    # イベント適用: SCHEDULED_* でクールタイムをリセット（キューは保持）
+    state = apply_scheduled_events(state, events)
 
     # 全対象がウォームアップ中かつ危険フラグなしなら検知をスキップ
     if all_targets_in_warmup(state, graph, server_time) and not has_danger_event(
