@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import statistics
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -42,6 +44,7 @@ class Event:
 @dataclass(frozen=True)
 class MetricTriggerDetectionResult:
     triggered_edges: tuple[EdgeID, ...]
+    fired_triggers: tuple[FiredTrigger, ...]
     new_state: DetectionState
 
 
@@ -54,6 +57,7 @@ def detect_metric_triggers(
     config: ResolvedConfig,
 ) -> MetricTriggerDetectionResult:
     triggered_edges: list[EdgeID] = []
+    fired_triggers: list[FiredTrigger] = []
     new_watch_states: list[ArcWatchState] = []
 
     for edge in graph.enabled_edges():
@@ -77,6 +81,22 @@ def detect_metric_triggers(
             server_time,
         )
 
+        if surge_fired:
+            fired_triggers.append(
+                FiredTrigger(
+                    kind=QueuedTriggerKind.SURGE,
+                    fired_at=server_time,
+                    origin_edge_id=edge.edge_id,
+                )
+            )
+        if stagnation_fired:
+            fired_triggers.append(
+                FiredTrigger(
+                    kind=QueuedTriggerKind.HIGH_STAGNATION,
+                    fired_at=server_time,
+                    origin_edge_id=edge.edge_id,
+                )
+            )
         if surge_fired or stagnation_fired:
             triggered_edges.append(edge.edge_id)
         if next_watch is not None:
@@ -90,6 +110,7 @@ def detect_metric_triggers(
 
     return MetricTriggerDetectionResult(
         triggered_edges=tuple(triggered_edges),
+        fired_triggers=tuple(fired_triggers),
         new_state=new_state,
     )
 
