@@ -103,6 +103,7 @@ def detect_metric_triggers(
                     kind=QueuedTriggerKind.SURGE,
                     fired_at=server_time,
                     origin_edge_id=edge.edge_id,
+                    snapshot_ref=observations.snapshot_ref,
                 )
             )
             evidences.append(
@@ -131,6 +132,7 @@ def detect_metric_triggers(
                     kind=QueuedTriggerKind.HIGH_STAGNATION,
                     fired_at=server_time,
                     origin_edge_id=edge.edge_id,
+                    snapshot_ref=observations.snapshot_ref,
                 )
             )
             # 発火時のみ観測値・履歴 p90 が揃う。揃っていれば Evidence を残す
@@ -323,6 +325,7 @@ class FiredTrigger:
     origin_edge_id: EdgeID | None = None
     origin_node_id: NodeID | None = None
     score: float = 1.0
+    snapshot_ref: str | None = None  # 検出時の観測スナップショット識別子
 
 
 @dataclass(frozen=True)
@@ -457,6 +460,7 @@ def _merge_into_queue(
                     accumulated_score=trigger.score,
                     origin_edge_id=trigger.origin_edge_id,
                     origin_node_id=trigger.origin_node_id,
+                    snapshot_ref=trigger.snapshot_ref,
                 )
             )
         else:
@@ -468,6 +472,7 @@ def _merge_into_queue(
                 accumulated_score=existing.accumulated_score + trigger.score,
                 origin_edge_id=existing.origin_edge_id,
                 origin_node_id=existing.origin_node_id,
+                snapshot_ref=trigger.snapshot_ref,  # last_fired_at と整合
             )
     return tuple(merged)
 

@@ -87,6 +87,7 @@ def detect(
             kind=QueuedTriggerKind.DANGER,
             fired_at=server_time,
             origin_edge_id=edge_id,
+            snapshot_ref=observations.snapshot_ref,
         )
         for edge_id in manual_result.triggered_edges
     ) + tuple(
@@ -94,6 +95,7 @@ def detect(
             kind=QueuedTriggerKind.DANGER,
             fired_at=server_time,
             origin_node_id=node_id,
+            snapshot_ref=observations.snapshot_ref,
         )
         for node_id in manual_result.triggered_nodes
     )
@@ -120,6 +122,9 @@ def detect(
     # 検出した通常トリガー・危険フラグ・キュー発火条件のEvidenceを統合
     evidences = metric_result.evidences + danger_evidences + decision.evidences
 
+    # 発火を起こすトリガーは常に当該リクエストのもの
+    # その時点のスナップショットが「キュー最後の発火時点」に一致
+    # 各キューエントリのsnapshot_ref には参照識別子を保持，過去スナップショットの参照に使用する
     return DetectionResult(
         verdict_hint=decision.verdict,
         triggered_edges=decision.triggered_edges,

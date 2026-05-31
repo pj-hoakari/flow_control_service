@@ -43,6 +43,7 @@ class NodeOccupancy:
 @dataclass(frozen=True)
 class Observations:
     observed_at: datetime
+    snapshot_ref: str | None = None
     arc_flows: tuple[ArcFlow, ...] = field(default_factory=tuple)
     arc_stagnations: tuple[ArcStagnation, ...] = field(default_factory=tuple)
     arc_scalar_flows: tuple[ArcScalarFlow, ...] = field(default_factory=tuple)

@@ -19,6 +19,7 @@ class QueuedTrigger:
     accumulated_score: float = 0.0
     origin_edge_id: EdgeID | None = None
     origin_node_id: NodeID | None = None
+    snapshot_ref: str | None = None
 
 
 @dataclass(frozen=True)

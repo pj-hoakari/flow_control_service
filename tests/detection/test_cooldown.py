@@ -40,12 +40,15 @@ def _config(
     )
 
 
-def _surge(edge: str, at: datetime, *, score: float = 1.0) -> FiredTrigger:
+def _surge(
+    edge: str, at: datetime, *, score: float = 1.0, snapshot_ref: str | None = None
+) -> FiredTrigger:
     return FiredTrigger(
         kind=QueuedTriggerKind.SURGE,
         fired_at=at,
         origin_edge_id=EdgeID(edge),
         score=score,
+        snapshot_ref=snapshot_ref,
     )
 
 
@@ -263,3 +266,45 @@ def test_arc_watch_states_are_preserved_when_queued(base_time: datetime):
 
     assert result.verdict == VerdictHint.QUEUED
     assert result.new_state.arc_watch_states == (watch,)
+
+
+# ---------------------------------------------------------------------------
+# snapshot_ref（キュー最終発火時点の参照）
+# ---------------------------------------------------------------------------
+
+
+def test_queued_trigger_records_snapshot_ref(base_time: datetime):
+    cooldown_until = base_time + timedelta(minutes=30)
+    state = DetectionState(cooldown_until=cooldown_until)
+    config = _config(score_threshold=5.0, diversity_threshold=3)
+
+    result = evaluate_cooldown(
+        state, (_surge("e1", base_time, snapshot_ref="snap-1"),), base_time, config
+    )
+
+    assert result.verdict == VerdictHint.QUEUED
+    assert result.new_state.trigger_queue[0].snapshot_ref == "snap-1"
+
+
+def test_same_route_merge_updates_snapshot_ref_to_latest(base_time: datetime):
+    cooldown_until = base_time + timedelta(minutes=30)
+    existing = QueuedTrigger(
+        kind=QueuedTriggerKind.SURGE,
+        first_fired_at=base_time - timedelta(minutes=5),
+        last_fired_at=base_time - timedelta(minutes=5),
+        accumulated_score=1.0,
+        origin_edge_id=EdgeID("e1"),
+        snapshot_ref="snap-old",
+    )
+    state = DetectionState(cooldown_until=cooldown_until, trigger_queue=(existing,))
+    config = _config(score_threshold=10.0, diversity_threshold=10)
+
+    result = evaluate_cooldown(
+        state, (_surge("e1", base_time, snapshot_ref="snap-new"),), base_time, config
+    )
+
+    assert result.verdict == VerdictHint.QUEUED
+    entry = result.new_state.trigger_queue[0]
+    # 最終発火時刻の更新に合わせて snapshot_ref も最新へ
+    assert entry.last_fired_at == base_time
+    assert entry.snapshot_ref == "snap-new"

@@ -179,6 +179,44 @@ def test_surge_in_cooldown_is_queued(
     assert entry.kind == QueuedTriggerKind.SURGE
 
 
+def test_queued_trigger_carries_observation_snapshot_ref(
+    base_time: datetime,
+    basic_graph: Graph,
+    edge_id: EdgeID,
+    make_linear_series,
+):
+    # observations.snapshot_ref がキューエントリの snapshot_ref へ伝播
+    window, scalar_flow = make_linear_series(
+        edge_id,
+        observed_at=base_time,
+        sample_count=11,
+        start_value=0.0,
+        slope_per_min=10.0,
+    )
+    history = HistoryDigest(window_series=(window,))
+    observations = Observations(
+        observed_at=base_time,
+        snapshot_ref="snap-42",
+        arc_scalar_flows=(scalar_flow,),
+    )
+    previous = DetectionState(cooldown_until=base_time + timedelta(minutes=30))
+
+    result = detect(
+        graph=basic_graph,
+        observations=observations,
+        history_digest=history,
+        previous_state=previous,
+        events=(),
+        config=_config(score_threshold=5.0, diversity_threshold=3),
+        server_time=base_time,
+    )
+
+    assert result.verdict_hint == VerdictHint.QUEUED
+    assert result.new_state.trigger_queue[0].snapshot_ref == "snap-42"
+    # effective_snapshot は当該リクエストの観測 = 最後の発火時点
+    assert result.effective_snapshot is observations
+
+
 def test_danger_in_cooldown_fires_immediately(
     base_time: datetime,
     basic_graph: Graph,
