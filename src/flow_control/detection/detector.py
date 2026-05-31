@@ -3,6 +3,7 @@ from datetime import datetime
 
 from ..domain.graph import EdgeID, Graph, NodeID
 from .config import ResolvedConfig
+from .diagnostics import DangerEvidence, TriggerEvidence
 from .history import HistoryDigest
 from .observations import Observations
 from .state import DetectionState, QueuedTriggerKind
@@ -29,6 +30,7 @@ class DetectionResult:
     triggered_nodes: tuple[NodeID, ...]
     effective_snapshot: Observations
     new_state: DetectionState
+    evidences: tuple[TriggerEvidence, ...] = ()
 
 
 def detect(
@@ -95,6 +97,13 @@ def detect(
         )
         for node_id in manual_result.triggered_nodes
     )
+    danger_evidences: tuple[TriggerEvidence, ...] = tuple(
+        DangerEvidence(occurred_at=server_time, edge_id=edge_id)
+        for edge_id in manual_result.triggered_edges
+    ) + tuple(
+        DangerEvidence(occurred_at=server_time, node_id=node_id)
+        for node_id in manual_result.triggered_nodes
+    )
 
     decision = evaluate_cooldown(
         previous_state=metric_result.new_state,
@@ -104,6 +113,12 @@ def detect(
     )
 
     new_state = replace(decision.new_state, arc_retrigger_counts=retrigger_counts)
+    # 発火時は連続スキップカウントをリセット
+    if decision.verdict == VerdictHint.TRIGGERED:
+        new_state = replace(new_state, consecutive_skip_count=0)
+
+    # 検出した通常トリガー・危険フラグ・キュー発火条件のEvidenceを統合
+    evidences = metric_result.evidences + danger_evidences + decision.evidences
 
     return DetectionResult(
         verdict_hint=decision.verdict,
@@ -111,4 +126,5 @@ def detect(
         triggered_nodes=decision.triggered_nodes,
         effective_snapshot=observations,
         new_state=new_state,
+        evidences=evidences,
     )

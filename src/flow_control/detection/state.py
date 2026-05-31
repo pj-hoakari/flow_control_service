@@ -50,6 +50,7 @@ class DetectionState:
     arc_watch_states: tuple[ArcWatchState, ...] = ()
     warmup_states: tuple[WarmupState, ...] = ()
     arc_retrigger_counts: tuple[RetriggerEntry, ...] = ()
+    consecutive_skip_count: int = 0
 
     def watch_state_of(self, edge_id: EdgeID) -> ArcWatchState | None:
         for watch in self.arc_watch_states:

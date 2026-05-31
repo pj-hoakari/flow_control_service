@@ -7,6 +7,13 @@ from enum import Enum
 
 from ..domain import EdgeID, Graph, NodeID
 from .config import ResolvedConfig
+from .diagnostics import (
+    HighStagnationEvidence,
+    QueueDiversityEvidence,
+    QueueScoreEvidence,
+    SurgeEvidence,
+    TriggerEvidence,
+)
 from .history import ArcHistoryStat, ArcWindowSeries, HistoryDigest
 from .observations import ArcScalarFlow, ArcStagnation, Observations
 from .state import (
@@ -52,6 +59,7 @@ class Event:
 class MetricTriggerDetectionResult:
     triggered_edges: tuple[EdgeID, ...]
     fired_triggers: tuple[FiredTrigger, ...]
+    evidences: tuple[TriggerEvidence, ...]
     new_state: DetectionState
 
 
@@ -65,6 +73,7 @@ def detect_metric_triggers(
 ) -> MetricTriggerDetectionResult:
     triggered_edges: list[EdgeID] = []
     fired_triggers: list[FiredTrigger] = []
+    evidences: list[TriggerEvidence] = []
     new_watch_states: list[ArcWatchState] = []
 
     for edge in graph.enabled_edges():
@@ -72,27 +81,23 @@ def detect_metric_triggers(
         if previous_state.is_in_warmup(_edge_target_key(edge.edge_id), server_time):
             continue
 
-        surge_fired = _evaluate_surge_trigger(
+        observed_stagnation = observations.stagnation_of(edge.edge_id)
+        history_stat = history_digest.stat_of(edge.edge_id)
+
+        surge_rate = _evaluate_surge_rate(
             edge.time_resolution_s,
             observations.observed_at,
             observations.scalar_flow_of(edge.edge_id),
             history_digest.window_series_of(edge.edge_id),
-            config.surge_rate_threshold_percent_per_min,
             config.surge_evaluate_window_minute,
             server_time,
         )
-
-        stagnation_fired, next_watch = _evaluate_high_stagnation_trigger(
-            edge.edge_id,
-            observations.stagnation_of(edge.edge_id),
-            history_digest.stat_of(edge.edge_id),
-            previous_state.watch_state_of(edge.edge_id),
-            config.high_stagnation_duration_min,
-            config.beta,
-            server_time,
-        )
-
-        if surge_fired:
+        surge_fired = False
+        if (
+            surge_rate is not None
+            and surge_rate > config.surge_rate_threshold_percent_per_min
+        ):
+            surge_fired = True
             fired_triggers.append(
                 FiredTrigger(
                     kind=QueuedTriggerKind.SURGE,
@@ -100,6 +105,26 @@ def detect_metric_triggers(
                     origin_edge_id=edge.edge_id,
                 )
             )
+            evidences.append(
+                SurgeEvidence(
+                    edge_id=edge.edge_id,
+                    occurred_at=server_time,
+                    rate_percent_per_min=surge_rate,
+                    threshold_percent_per_min=(
+                        config.surge_rate_threshold_percent_per_min
+                    ),
+                )
+            )
+
+        stagnation_fired, next_watch = _evaluate_high_stagnation_trigger(
+            edge.edge_id,
+            observed_stagnation,
+            history_stat,
+            previous_state.watch_state_of(edge.edge_id),
+            config.high_stagnation_duration_min,
+            config.beta,
+            server_time,
+        )
         if stagnation_fired:
             fired_triggers.append(
                 FiredTrigger(
@@ -108,6 +133,21 @@ def detect_metric_triggers(
                     origin_edge_id=edge.edge_id,
                 )
             )
+            # 発火時のみ観測値・履歴 p90 が揃う。揃っていれば Evidence を残す
+            if (
+                observed_stagnation is not None
+                and history_stat is not None
+                and history_stat.p90_stagnation is not None
+            ):
+                evidences.append(
+                    HighStagnationEvidence(
+                        edge_id=edge.edge_id,
+                        occurred_at=server_time,
+                        stagnation=observed_stagnation.stagnation,
+                        percentile_threshold=history_stat.p90_stagnation,
+                        duration_min=config.high_stagnation_duration_min,
+                    )
+                )
         if surge_fired or stagnation_fired:
             triggered_edges.append(edge.edge_id)
         if next_watch is not None:
@@ -118,24 +158,25 @@ def detect_metric_triggers(
     return MetricTriggerDetectionResult(
         triggered_edges=tuple(triggered_edges),
         fired_triggers=tuple(fired_triggers),
+        evidences=tuple(evidences),
         new_state=new_state,
     )
 
 
-def _evaluate_surge_trigger(
+def _evaluate_surge_rate(
     edge_resolution_s: float,
     observed_at: datetime,
     observed_scaler_flow: ArcScalarFlow | None,
     history_series: ArcWindowSeries | None,
-    threshold_per_min: float,
     evaluate_window_minute: float,
     server_time: datetime,
-) -> bool:
+) -> float | None:
+    # 直近ウィンドウの最小二乗回帰による変化率 %/分。算出不能なら None
     window_minute = evaluate_window_minute + edge_resolution_s / 60.0
     window_start_time = server_time - timedelta(minutes=window_minute)
 
     if history_series is None:
-        return False
+        return None
 
     series = [(t, v) for (t, v) in history_series.samples if t >= window_start_time]
 
@@ -143,7 +184,7 @@ def _evaluate_surge_trigger(
         series.append((observed_at, observed_scaler_flow.observed_count))
 
     if len(series) < 2:
-        return False
+        return None
 
     (first_time, _) = series[0]
     xs = [(t - first_time).total_seconds() / 60.0 for (t, _) in series]
@@ -155,17 +196,13 @@ def _evaluate_surge_trigger(
     den = sum((x - x_mean) ** 2 for x in xs)
 
     if den < EPSILON_FLOW:
-        return False
+        return None
     slope = num / den
 
     if y_mean < EPSILON_FLOW:
-        return False
-    rate_per_min = (slope / y_mean) * 100.0
+        return None
 
-    if rate_per_min > threshold_per_min:
-        return True
-
-    return False
+    return (slope / y_mean) * 100.0
 
 
 def _evaluate_high_stagnation_trigger(
@@ -191,14 +228,13 @@ def _evaluate_high_stagnation_trigger(
         return False, None
 
     if percentile_breached and delta_breached:
-        prev_both_breached = (
+        # 前サイクルも両条件成立かつ計時開始済みなら継続時間を判定する
+        if (
             previous_watch is not None
             and previous_watch.percentile_breached
             and previous_watch.delta_breached
             and previous_watch.started_at is not None
-        )
-        if prev_both_breached:
-            assert previous_watch is not None and previous_watch.started_at is not None
+        ):
             elapsed_minutes = (
                 server_time - previous_watch.started_at
             ).total_seconds() / 60.0
@@ -217,14 +253,13 @@ def _evaluate_high_stagnation_trigger(
             started_at=server_time,
         )
 
-    same_partial_configuration = (
+    # 片方のみ成立。前サイクルと同じ成立構成なら計時開始時刻を引き継ぐ
+    if (
         previous_watch is not None
         and previous_watch.percentile_breached == percentile_breached
         and previous_watch.delta_breached == delta_breached
         and previous_watch.started_at is not None
-    )
-    if same_partial_configuration:
-        assert previous_watch is not None
+    ):
         return False, ArcWatchState(
             edge_id=edge_id,
             percentile_breached=percentile_breached,
@@ -296,6 +331,7 @@ class CooldownDecision:
     triggered_edges: tuple[EdgeID, ...]
     triggered_nodes: tuple[NodeID, ...]
     new_state: DetectionState
+    evidences: tuple[TriggerEvidence, ...] = ()
 
 
 def evaluate_cooldown(
@@ -329,7 +365,16 @@ def evaluate_cooldown(
                 merged_queue, config
             ):
                 # スコア超過 or 多様性超過
-                return _fire(previous_state, server_time, config, merged_queue)
+                queue_evidences = _queue_fire_evidences(
+                    merged_queue, config, server_time
+                )
+                return _fire(
+                    previous_state,
+                    server_time,
+                    config,
+                    merged_queue,
+                    evidences=queue_evidences,
+                )
             queued_state = replace(previous_state, trigger_queue=merged_queue)
             return CooldownDecision(VerdictHint.QUEUED, (), (), queued_state)
         # クールタイム中，トリガーなし
@@ -352,14 +397,48 @@ def _fire(
     server_time: datetime,
     config: ResolvedConfig,
     *origin_sources: tuple[object, ...],
+    evidences: tuple[TriggerEvidence, ...] = (),
 ) -> CooldownDecision:
     triggered_edges = _distinct_origin_edges(origin_sources)
     triggered_nodes = _distinct_origin_nodes(origin_sources)
     cooldown_until = server_time + timedelta(minutes=config.cooldown_duration_min)
     new_state = replace(previous_state, cooldown_until=cooldown_until, trigger_queue=())
     return CooldownDecision(
-        VerdictHint.TRIGGERED, triggered_edges, triggered_nodes, new_state
+        VerdictHint.TRIGGERED, triggered_edges, triggered_nodes, new_state, evidences
     )
+
+
+def _queue_fire_evidences(
+    queue: tuple[QueuedTrigger, ...],
+    config: ResolvedConfig,
+    server_time: datetime,
+) -> tuple[TriggerEvidence, ...]:
+    evidences: list[TriggerEvidence] = []
+    if _queue_exceeds_score(queue, config):
+        total = sum(entry.accumulated_score for entry in queue)
+        evidences.append(
+            QueueScoreEvidence(
+                occurred_at=server_time,
+                accumulated_score=total,
+                score_threshold=config.queue_score_threshold,
+            )
+        )
+    if _queue_is_diverse(queue, config):
+        distinct = len(
+            {
+                entry.origin_edge_id
+                for entry in queue
+                if entry.origin_edge_id is not None
+            }
+        )
+        evidences.append(
+            QueueDiversityEvidence(
+                occurred_at=server_time,
+                distinct_origin_count=distinct,
+                diversity_threshold=config.queue_diversity_threshold,
+            )
+        )
+    return tuple(evidences)
 
 
 def _merge_into_queue(
