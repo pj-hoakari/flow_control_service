@@ -18,8 +18,8 @@ from datetime import datetime
 import pytest
 
 from flow_control.detection.config import ResolvedConfig
-from flow_control.detection.history import ArcWindowSeries, HistoryDigest
-from flow_control.detection.observations import Observations
+from flow_control.domain.history import ArcWindowSeries, HistoryDigest
+from flow_control.domain.observations import Observations
 from flow_control.detection.state import DetectionState
 from flow_control.detection.triggers import detect_metric_triggers
 from flow_control.domain import EdgeID, Graph

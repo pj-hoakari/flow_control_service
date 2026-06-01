@@ -2,7 +2,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 
-from ..domain import EdgeID, FlowDirection, NodeID
+from .enums import FlowDirection
+from .graph import EdgeID, NodeID
 
 
 class ConfidenceFlag(str, Enum):

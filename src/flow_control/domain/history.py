@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from ..domain.graph import EdgeID
+from .graph import EdgeID
 
 
 @dataclass(frozen=True)

@@ -5,8 +5,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from flow_control.detection.config import ResolvedConfig
-from flow_control.detection.history import ArcHistoryStat, ArcWindowSeries, HistoryDigest
-from flow_control.detection.observations import ArcScalarFlow, ArcStagnation, Observations
+from flow_control.domain.history import ArcHistoryStat, ArcWindowSeries, HistoryDigest
+from flow_control.domain.observations import ArcScalarFlow, ArcStagnation, Observations
 from flow_control.domain import (
     CurrentDirection,
     DirectionConstraint,
