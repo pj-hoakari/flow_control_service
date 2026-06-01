@@ -5,6 +5,7 @@ from ..domain.history import HistoryDigest
 from ..domain.observations import Observations
 from ..domain.references import Reference
 from .config import ResolvedConfig
+from .demand import compute_node_flow_balances
 
 
 @dataclass(frozen=True)
@@ -57,6 +58,8 @@ def forecast(
     config: ResolvedConfig,
 ) -> ForecastResult:
     is_open_mode = len(graph.boundary_nodes()) > 0
+
+    node_flow_balances = compute_node_flow_balances(graph, observations)
 
     od_matrix: tuple[ODDemand, ...] = ()
 
