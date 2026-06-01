@@ -15,6 +15,7 @@ from .observations import (
     NodeOccupancy,
     Observations,
 )
+from .references import Reference, TagReference
 
 __all__ = [
     "ArcFlow",
@@ -36,4 +37,6 @@ __all__ = [
     "NodeOccupancy",
     "Observations",
     "ObservationType",
+    "Reference",
+    "TagReference",
 ]

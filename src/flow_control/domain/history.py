@@ -9,6 +9,7 @@ class ArcHistoryStat:
     edge_id: EdgeID
     p90_stagnation: float | None = None
     baseline_stagnation: float | None = None
+    flow_sensitivity_eta: float | None = None
 
 
 @dataclass(frozen=True)
