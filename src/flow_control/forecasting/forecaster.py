@@ -5,15 +5,7 @@ from ..domain.history import HistoryDigest
 from ..domain.observations import Observations
 from ..domain.references import Reference
 from .config import ResolvedConfig
-from .demand import compute_node_flow_balances
-
-
-@dataclass(frozen=True)
-class ODDemand:
-    # OD 需要行列の 1 エントリ d_ij（モジュール設計 §5.2 od_matrix）
-    origin: NodeID
-    destination: NodeID
-    demand: float
+from .demand import ODDemand, compute_node_flow_balances, estimate_od_open
 
 
 @dataclass(frozen=True)
@@ -61,7 +53,11 @@ def forecast(
 
     node_flow_balances = compute_node_flow_balances(graph, observations)
 
-    od_matrix: tuple[ODDemand, ...] = ()
+    if is_open_mode:
+        od_matrix = estimate_od_open(graph, node_flow_balances, config)
+    else:
+        # TODO: Closed モードの両制約 IPF
+        od_matrix = ()
 
     arc_flow_sensitivity: tuple[ArcFlowSensitivity, ...] = ()
     fallback_usage = FallbackReport()

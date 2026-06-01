@@ -1,10 +1,14 @@
-from .demand import NodeFlowBalance, compute_node_flow_balances
+from .demand import (
+    NodeFlowBalance,
+    ODDemand,
+    compute_node_flow_balances,
+    estimate_od_open,
+)
 from .forecaster import (
     ArcFlowSensitivity,
     FallbackReport,
     ForecastResult,
     NodeConfidence,
-    ODDemand,
     ReferenceSampleCount,
     forecast,
 )
@@ -18,5 +22,6 @@ __all__ = [
     "ODDemand",
     "ReferenceSampleCount",
     "compute_node_flow_balances",
+    "estimate_od_open",
     "forecast",
 ]
