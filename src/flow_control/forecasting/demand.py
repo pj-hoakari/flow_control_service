@@ -68,7 +68,7 @@ def compute_node_demand(
     occupancy_by_node = _valid_occupancy_by_node(observations)
 
     # ── 未観測アークの保存補完（in-place で P_v, A_v を更新） ──
-    _impute_unobserved_arcs(
+    _ = _impute_unobserved_arcs(
         active_nodes, outflow, inflow, observed_edges, occupancy_by_node, graph
     )
 

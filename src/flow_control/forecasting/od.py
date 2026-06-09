@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from ..domain.enums import FlowDirection, NodeKind, ObservationType
-from ..domain.graph import EdgeID, Graph, NodeID
+from ..domain.graph import EdgeID, Graph, Node, NodeID
 from ..domain.observations import ConfidenceFlag, Observations
 from .config import ResolvedConfig
 from .demand import NodeDemand
@@ -158,7 +158,7 @@ def _directed_flows(
 
 
 def _io_counts(
-    active_nodes: tuple,
+    active_nodes: tuple[Node, ...],
     flows: dict[str, _DirectedFlow],
 ) -> tuple[dict[NodeID, int], dict[NodeID, int]]:
     """各ノードの観測入口エッジ数 d_in・出口エッジ数 d_out を数える"""
@@ -191,7 +191,7 @@ def _missing_observation_by_node(
     return missing
 
 
-def _is_decidable(node, in_degree: int, out_degree: int) -> bool:
+def _is_decidable(node: Node, in_degree: int, out_degree: int) -> bool:
     """転換率が周辺量だけで一意に定まる（DOF=0）か
 
     d_out^+ = 出口エッジ数 +（滞在可能 kind なら 1）
@@ -207,7 +207,7 @@ def _is_decidable(node, in_degree: int, out_degree: int) -> bool:
 
 
 def _build_resolutions(
-    active_nodes: tuple,
+    active_nodes: tuple[Node, ...],
     in_count: dict[NodeID, int],
     out_count: dict[NodeID, int],
     missing_by_node: dict[NodeID, bool],

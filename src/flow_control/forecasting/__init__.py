@@ -6,7 +6,6 @@ from .forecaster import (
     ArcFlowSensitivity,
     FallbackReport,
     ForecastResult,
-    NodeConfidence,
     ReferenceSampleCount,
     forecast,
 )
@@ -17,6 +16,11 @@ from .od import (
     ODResolutionReason,
     ODResult,
     estimate_od,
+)
+from .validation import (
+    NodeConfidence,
+    ValidationResult,
+    validate_od,
 )
 
 __all__ = [
@@ -31,7 +35,9 @@ __all__ = [
     "ODResolutionReason",
     "ODResult",
     "ReferenceSampleCount",
+    "ValidationResult",
     "compute_node_demand",
     "estimate_od",
     "forecast",
+    "validate_od",
 ]
