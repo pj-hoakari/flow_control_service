@@ -8,6 +8,7 @@ dependencies = []
 
 [dependency-groups]
 dev = [
+    "basedpyright>=1.39.7",
     "pytest>=8.0",
 ]
 
@@ -21,3 +22,17 @@ packages = ["src/flow_control"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.basedpyright]
+include = ["src", "tests", "main.py"]
+
+extraPaths = ["src"]
+
+[[tool.basedpyright.executionEnvironments]]
+root = "tests"
+extraPaths = ["src"]
+reportUnknownParameterType = false
+reportUnknownVariableType = false
+reportUnknownArgumentType = false
+reportUnknownMemberType = false
+reportMissingParameterType = false

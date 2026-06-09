@@ -346,7 +346,6 @@ def _both_satisfied_setup(
     edge_ids: tuple[EdgeID, ...],
     stagnating_indices: set[int],
     base_time: datetime,
-    make_stagnation_observation,
     make_history_with_arc_stats,
 ):
     """指定インデックスのエッジは両条件成立、それ以外は両条件不成立となる入力を組み立てる
@@ -377,7 +376,6 @@ def test_y_graph_no_trigger_when_all_edges_calm(
     y_graph: Graph,
     y_graph_edge_ids: tuple[EdgeID, EdgeID, EdgeID],
     high_stagnation_config: ResolvedConfig,
-    make_stagnation_observation,
     make_history_with_arc_stats,
 ):
     # 3 エッジすべて両条件不成立
@@ -385,7 +383,6 @@ def test_y_graph_no_trigger_when_all_edges_calm(
         y_graph_edge_ids,
         stagnating_indices=set(),
         base_time=base_time,
-        make_stagnation_observation=make_stagnation_observation,
         make_history_with_arc_stats=make_history_with_arc_stats,
     )
 
@@ -408,7 +405,6 @@ def test_y_graph_fires_only_on_stagnating_edge_after_m_minutes(
     y_graph: Graph,
     y_graph_edge_ids: tuple[EdgeID, EdgeID, EdgeID],
     high_stagnation_config: ResolvedConfig,
-    make_stagnation_observation,
     make_history_with_arc_stats,
     stagnating_index: int,
 ):
@@ -418,7 +414,6 @@ def test_y_graph_fires_only_on_stagnating_edge_after_m_minutes(
         y_graph_edge_ids,
         stagnating_indices={stagnating_index},
         base_time=base_time,
-        make_stagnation_observation=make_stagnation_observation,
         make_history_with_arc_stats=make_history_with_arc_stats,
     )
     target = y_graph_edge_ids[stagnating_index]
@@ -450,17 +445,15 @@ def test_y_graph_fires_on_multiple_stagnating_edges(
     y_graph: Graph,
     y_graph_edge_ids: tuple[EdgeID, EdgeID, EdgeID],
     high_stagnation_config: ResolvedConfig,
-    make_stagnation_observation,
     make_history_with_arc_stats,
 ):
     # e1 / e3 が両条件成立、e2 は不成立
     # e1 / e3 はともに M 分以上の先行警戒状態を保持しており、両方発火する
-    e1, e2, e3 = y_graph_edge_ids
+    e1, _e2, e3 = y_graph_edge_ids
     history, observations = _both_satisfied_setup(
         y_graph_edge_ids,
         stagnating_indices={0, 2},
         base_time=base_time,
-        make_stagnation_observation=make_stagnation_observation,
         make_history_with_arc_stats=make_history_with_arc_stats,
     )
     previous = DetectionState(
