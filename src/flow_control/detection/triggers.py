@@ -4,6 +4,7 @@ import statistics
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from enum import Enum
+from typing import Protocol
 
 from ..domain import EdgeID, Graph, NodeID
 from ..domain.history import ArcHistoryStat, ArcWindowSeries, HistoryDigest
@@ -399,7 +400,7 @@ def _fire(
     previous_state: DetectionState,
     server_time: datetime,
     config: ResolvedConfig,
-    *origin_sources: tuple[object, ...],
+    *origin_sources: tuple[_TriggerOrigin, ...],
     evidences: tuple[TriggerEvidence, ...] = (),
 ) -> CooldownDecision:
     triggered_edges = _distinct_origin_edges(origin_sources)
@@ -501,14 +502,22 @@ def _queue_is_diverse(queue: tuple[QueuedTrigger, ...], config: ResolvedConfig) 
     return len(distinct_edges) > config.queue_diversity_threshold
 
 
+# origin_edge_id / origin_node_id を持つトリガー (QueuedTrigger / FiredTrigger) の共通形
+class _TriggerOrigin(Protocol):
+    @property
+    def origin_edge_id(self) -> EdgeID | None: ...
+    @property
+    def origin_node_id(self) -> NodeID | None: ...
+
+
 def _distinct_origin_edges(
-    origin_sources: tuple[tuple[object, ...], ...],
+    origin_sources: tuple[tuple[_TriggerOrigin, ...], ...],
 ) -> tuple[EdgeID, ...]:
     seen: set[EdgeID] = set()
     ordered: list[EdgeID] = []
     for source in origin_sources:
         for item in source:
-            edge_id = getattr(item, "origin_edge_id", None)
+            edge_id = item.origin_edge_id
             if edge_id is not None and edge_id not in seen:
                 seen.add(edge_id)
                 ordered.append(edge_id)
@@ -516,13 +525,13 @@ def _distinct_origin_edges(
 
 
 def _distinct_origin_nodes(
-    origin_sources: tuple[tuple[object, ...], ...],
+    origin_sources: tuple[tuple[_TriggerOrigin, ...], ...],
 ) -> tuple[NodeID, ...]:
     seen: set[NodeID] = set()
     ordered: list[NodeID] = []
     for source in origin_sources:
         for item in source:
-            node_id = getattr(item, "origin_node_id", None)
+            node_id = item.origin_node_id
             if node_id is not None and node_id not in seen:
                 seen.add(node_id)
                 ordered.append(node_id)
