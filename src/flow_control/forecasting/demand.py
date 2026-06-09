@@ -1,4 +1,3 @@
-from collections import deque
 from dataclasses import dataclass
 
 from ..domain.enums import FlowDirection, NodeKind, ObservationType
@@ -9,7 +8,7 @@ from .config import ResolvedConfig
 
 @dataclass(frozen=True)
 class NodeDemand:
-    """点需要分解（数理補助 §10.1）の結果
+    """点需要分解の結果
 
     粗流出 P_v・粗流入 A_v を相殺せず保持し，滞在・通過・真の生成・吸収に分解する
     """
@@ -21,13 +20,6 @@ class NodeDemand:
     absorption: float  # absorb_v = stay_v（OD 列周辺＝吸収量）
     transit: float  # trans_v = A_v − stay_v（通過量）
     staying: float  # stay_v（滞在＝終端需要）
-
-
-@dataclass(frozen=True)
-class ODDemand:
-    origin: NodeID
-    destination: NodeID
-    demand: float
 
 
 def compute_node_demand(
@@ -126,7 +118,6 @@ def _staying_demand(
 
     GOAL_TRANSIT_MIXED は (b) 占有量変化 → (c) リトルの法則 → (d) prior の順
     （(a) 導出転換率は Step B の転換率内部導出に対応するため扱わない）
-    通過量 trans_v = A_v − stay_v が非負となるよう stay_v は [0, A_v] にクランプする
     """
     if node.kind == NodeKind.TRANSIT_ONLY:
         return 0.0
@@ -140,16 +131,13 @@ def _staying_demand(
     dwell = config.dwell_time_prior_sec
 
     if delta_occ is not None and delta_occ > 0.0:
-        staying = delta_occ  # (b) 蓄積フェーズ
-    elif tau is not None and dwell is not None and dwell > tau and level is not None:
+        return delta_occ  # (b) 蓄積フェーズ
+    if tau is not None and dwell is not None and dwell > tau and level is not None:
         # (c) リトルの法則：占有レベルのうち通過ベースラインを超える滞留分を換算
-        staying = max(0.0, (level - gross_in * tau) / (dwell - tau))
-    elif delta_occ is not None:
-        staying = max(0.0, delta_occ)  # (b) 定常・排出フェーズ（実質 0）
-    else:
-        staying = 0.0  # (d) 信号なし → prior 縮退
-
-    return min(staying, gross_in)
+        return max(0.0, (level - gross_in * tau) / (dwell - tau))
+    if delta_occ is not None:
+        return max(0.0, delta_occ)  # (b) 定常・排出フェーズ（実質 0）
+    return 0.0  # (d) 信号なし → prior 縮退
 
 
 def _impute_unobserved_arcs(
@@ -224,89 +212,3 @@ def _impute_unobserved_arcs(
             progressed = True
 
     return imputed
-
-
-def _build_adjacency(graph: Graph) -> dict[NodeID, list[NodeID]]:
-    """有効エッジから無向隣接リストを構築する
-
-    ホップ距離算出用
-    観測型に依らず enabled なエッジを物理ネットワークとして扱う
-    """
-    enabled_node_ids = {node.node_id for node in graph.enabled_nodes()}
-    adjacency: dict[NodeID, list[NodeID]] = {nid: [] for nid in enabled_node_ids}
-    for edge in graph.enabled_edges():
-        a, b = edge.endpoint_a, edge.endpoint_b
-        if a in enabled_node_ids and b in enabled_node_ids:
-            adjacency[a].append(b)
-            adjacency[b].append(a)
-    return adjacency
-
-
-def _hop_distances(
-    adjacency: dict[NodeID, list[NodeID]], source: NodeID
-) -> dict[NodeID, int]:
-    """source から各ノードへの無向ホップ数を BFS で算出
-    到達不能ノードは欠落
-    """
-    distances: dict[NodeID, int] = {source: 0}
-    queue: deque[NodeID] = deque((source,))
-    while queue:
-        current = queue.popleft()
-        for neighbor in adjacency.get(current, ()):
-            if neighbor not in distances:
-                distances[neighbor] = distances[current] + 1
-                queue.append(neighbor)
-    return distances
-
-
-def estimate_od_open(
-    graph: Graph,
-    node_demands: tuple[NodeDemand, ...],
-    config: ResolvedConfig,
-) -> tuple[ODDemand, ...]:
-    """Open モードの距離 prior 重力モデルで OD 需要 δ_{s,t} を推定"""
-    boundary_ids = {node.node_id for node in graph.boundary_nodes()}
-    sources = tuple(d for d in node_demands if d.production > 0.0)
-    sinks = tuple(d for d in node_demands if d.absorption > 0.0)
-    if not sources or not sinks:
-        return ()
-
-    adjacency = _build_adjacency(graph)
-    alpha = config.gravity_alpha
-
-    od_demands: list[ODDemand] = []
-    for source in sources:
-        source_is_boundary = source.node_id in boundary_ids
-        distances = _hop_distances(adjacency, source.node_id)
-
-        # 当該 Source から到達可能かつ対象となる Sink の重みを算出
-        weighted_sinks: list[tuple[NodeDemand, float]] = []
-        weight_total = 0.0
-        for sink in sinks:
-            if sink.node_id == source.node_id:
-                continue  # 自己 OD は対象外
-            if source_is_boundary and sink.node_id in boundary_ids:
-                continue  # 外部→外部は対象外
-            hop = distances.get(sink.node_id)
-            if hop is None:
-                continue  # 到達不能
-            weight = 1.0 / (hop + 1) ** alpha
-            contribution = sink.absorption * weight
-            weighted_sinks.append((sink, contribution))
-            weight_total += contribution
-
-        if weight_total <= 0.0:
-            continue
-
-        for sink, contribution in weighted_sinks:
-            delta = source.production * (contribution / weight_total)
-            if delta > config.delta_min:
-                od_demands.append(
-                    ODDemand(
-                        origin=source.node_id,
-                        destination=sink.node_id,
-                        demand=delta,
-                    )
-                )
-
-    return tuple(od_demands)

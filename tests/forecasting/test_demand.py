@@ -363,23 +363,28 @@ def test_mixed_without_signal_degrades_to_zero(observed_at: datetime) -> None:
     assert v.transit == 10.0
 
 
-def test_mixed_staying_clamped_to_gross_in(observed_at: datetime) -> None:
-    """滞在が粗流入を超える ΔOcc でも stay は A_v にクランプされ trans>=0"""
+def test_mixed_occupancy_only_drives_demand(observed_at: datetime) -> None:
+    """流量観測が無く占有変化のみでも ΔOcc がそのまま生成・吸収となる
+
+    arc_flows 無し・v は GOAL_TRANSIT_MIXED で ΔOcc=8 → A_v=0, stay=8
+    prod=max(0,0-0+8)=8, absorb=8（Step B の距離 prior 階層へ供給される）
+    """
     graph = Graph(
         nodes=(_node("a"), _node("v", kind=NodeKind.GOAL_TRANSIT_MIXED)),
         edges=(_edge("e1", "a", "v"),),
     )
     observations = Observations(
         observed_at=observed_at,
-        arc_flows=(_flow("e1", FlowDirection.A_TO_B, 4.0),),
         node_occupancies=(
-            NodeOccupancy(node_id=NodeID("v"), occupancy=99.0, occupancy_delta=99.0),
+            NodeOccupancy(node_id=NodeID("v"), occupancy=8.0, occupancy_delta=8.0),
         ),
     )
 
     v = _demand_of(compute_node_demand(graph, observations, _config()), "v")
-    assert v.staying == 4.0
-    assert v.transit == 0.0
+    assert v.gross_in == 0.0
+    assert v.staying == 8.0
+    assert v.production == 8.0
+    assert v.absorption == 8.0
 
 
 # ── 単一未観測アークの保存補完 ──

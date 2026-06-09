@@ -107,8 +107,11 @@ def test_forecast_open_mode_decomposes_then_builds_od() -> None:
     assert od.demand == pytest.approx(10.0)
 
 
-def test_forecast_closed_mode_decomposes_but_od_empty() -> None:
-    """Closed モードでも点需要分解は行われる"""
+def test_forecast_closed_mode_decomposes_and_builds_od() -> None:
+    """Closed モードでも Step A 点需要分解＋Step B OD 推定が行われる
+
+    a(生成) -e1=5-> b(ゴール吸収)。境界が無く Closed モード，前方伝播で δ(a,b)=5
+    """
     graph = Graph(
         nodes=(_node("a", NodeKind.GOAL), _node("b", NodeKind.GOAL)),
         edges=(_vector_edge("e1", "a", "b"),),
@@ -127,8 +130,9 @@ def test_forecast_closed_mode_decomposes_but_od_empty() -> None:
         config=_config(),
     )
 
-    # Step A はモード非依存で実行される
     assert _demand_of(result.node_demand, "a").production == 5.0
     assert _demand_of(result.node_demand, "b").absorption == 5.0
-    # Step B（Closed モード両制約 IPF）は未実装
-    assert result.od_matrix == ()
+    assert len(result.od_matrix) == 1
+    od = result.od_matrix[0]
+    assert (od.origin, od.destination) == (NodeID("a"), NodeID("b"))
+    assert od.demand == pytest.approx(5.0)

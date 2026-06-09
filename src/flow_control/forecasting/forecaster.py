@@ -5,7 +5,8 @@ from ..domain.history import HistoryDigest
 from ..domain.observations import Observations
 from ..domain.references import Reference
 from .config import ResolvedConfig
-from .demand import NodeDemand, ODDemand, compute_node_demand, estimate_od_open
+from .demand import NodeDemand, compute_node_demand
+from .od import NodeResolution, ODDemand, estimate_od
 
 
 @dataclass(frozen=True)
@@ -37,6 +38,7 @@ class FallbackReport:
 class ForecastResult:
     od_matrix: tuple[ODDemand, ...] = ()
     node_demand: tuple[NodeDemand, ...] = ()
+    estimation_resolution: tuple[NodeResolution, ...] = ()
     node_confidence: tuple[NodeConfidence, ...] = ()
     arc_flow_sensitivity: tuple[ArcFlowSensitivity, ...] = ()
     fallback_usage: FallbackReport = field(default_factory=FallbackReport)
@@ -52,15 +54,13 @@ def forecast(
 ) -> ForecastResult:
     is_open_mode = len(graph.boundary_nodes()) > 0
 
-    # Step A: 点需要の独立推定（モード非依存，数理補助 §10.1）
+    # Step A: 点需要の独立推定
     node_demand = compute_node_demand(graph, observations, config)
 
-    # Step B: OD 推定（数理補助 §10.2）
-    if is_open_mode:
-        od_matrix = estimate_od_open(graph, node_demand, config)
-    else:
-        # TODO: Closed モードの両制約 IPF
-        od_matrix = ()
+    # Step B: OD 推定
+    od_result = estimate_od(
+        graph, observations, node_demand, config, is_open_mode=is_open_mode
+    )
 
     arc_flow_sensitivity: tuple[ArcFlowSensitivity, ...] = ()
     fallback_usage = FallbackReport()
@@ -68,8 +68,9 @@ def forecast(
     node_confidence: tuple[NodeConfidence, ...] = ()
 
     return ForecastResult(
-        od_matrix=od_matrix,
+        od_matrix=od_result.od_matrix,
         node_demand=node_demand,
+        estimation_resolution=od_result.resolutions,
         node_confidence=node_confidence,
         arc_flow_sensitivity=arc_flow_sensitivity,
         fallback_usage=fallback_usage,
