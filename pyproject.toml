@@ -22,3 +22,17 @@ packages = ["src/flow_control"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.basedpyright]
+include = ["src", "tests", "main.py"]
+
+extraPaths = ["src"]
+
+[[tool.basedpyright.executionEnvironments]]
+root = "tests"
+extraPaths = ["src"]
+reportUnknownParameterType = false
+reportUnknownVariableType = false
+reportUnknownArgumentType = false
+reportUnknownMemberType = false
+reportMissingParameterType = false
