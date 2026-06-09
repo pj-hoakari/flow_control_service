@@ -20,8 +20,8 @@ from flow_control.detection.diagnostics import (
     SurgeEvidence,
     TriggerEvidence,
 )
-from flow_control.detection.history import HistoryDigest
-from flow_control.detection.observations import Observations
+from flow_control.domain.history import HistoryDigest
+from flow_control.domain.observations import Observations
 from flow_control.detection.state import (
     ArcWatchState,
     DetectionState,

@@ -2,10 +2,10 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 
 from ..domain.graph import EdgeID, Graph, NodeID
+from ..domain.history import HistoryDigest
+from ..domain.observations import Observations
 from .config import ResolvedConfig
 from .diagnostics import DangerEvidence, TriggerEvidence
-from .history import HistoryDigest
-from .observations import Observations
 from .state import DetectionState, QueuedTriggerKind
 from .triggers import (
     Event,

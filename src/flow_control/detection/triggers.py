@@ -6,6 +6,8 @@ from datetime import datetime, timedelta
 from enum import Enum
 
 from ..domain import EdgeID, Graph, NodeID
+from ..domain.history import ArcHistoryStat, ArcWindowSeries, HistoryDigest
+from ..domain.observations import ArcScalarFlow, ArcStagnation, Observations
 from .config import ResolvedConfig
 from .diagnostics import (
     HighStagnationEvidence,
@@ -14,8 +16,6 @@ from .diagnostics import (
     SurgeEvidence,
     TriggerEvidence,
 )
-from .history import ArcHistoryStat, ArcWindowSeries, HistoryDigest
-from .observations import ArcScalarFlow, ArcStagnation, Observations
 from .state import (
     ArcWatchState,
     DetectionState,

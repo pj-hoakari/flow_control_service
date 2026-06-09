@@ -15,8 +15,8 @@ from datetime import datetime, timedelta
 import pytest
 
 from flow_control.detection.config import ResolvedConfig
-from flow_control.detection.history import HistoryDigest
-from flow_control.detection.observations import Observations
+from flow_control.domain.history import HistoryDigest
+from flow_control.domain.observations import Observations
 from flow_control.detection.state import ArcWatchState, DetectionState
 from flow_control.detection.triggers import detect_metric_triggers
 from flow_control.domain import EdgeID, Graph
@@ -355,7 +355,7 @@ def _both_satisfied_setup(
     """
     stats: list[tuple[EdgeID, float | None, float | None]] = []
     stagnations = []
-    from flow_control.detection.observations import ArcStagnation
+    from flow_control.domain.observations import ArcStagnation
 
     for i, eid in enumerate(edge_ids):
         if i in stagnating_indices:

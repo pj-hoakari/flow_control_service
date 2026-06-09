@@ -13,8 +13,8 @@ from datetime import datetime, timedelta
 
 from flow_control.detection.config import ResolvedConfig
 from flow_control.detection.detector import detect
-from flow_control.detection.history import HistoryDigest
-from flow_control.detection.observations import Observations
+from flow_control.domain.history import HistoryDigest
+from flow_control.domain.observations import Observations
 from flow_control.detection.state import (
     ArcWatchState,
     DetectionState,
