@@ -6,6 +6,7 @@ import pytest
 
 from flow_control.domain import (
     ArcFlow,
+    ArcHistoryStat,
     CurrentDirection,
     DirectionConstraint,
     Edge,
@@ -20,7 +21,7 @@ from flow_control.domain import (
     ObservationType,
     Reference,
 )
-from flow_control.forecasting import forecast
+from flow_control.forecasting import ODResolutionMode, forecast
 from flow_control.forecasting.config import ResolvedConfig
 from flow_control.forecasting.demand import NodeDemand
 
@@ -136,3 +137,59 @@ def test_forecast_closed_mode_decomposes_and_builds_od() -> None:
     od = result.od_matrix[0]
     assert (od.origin, od.destination) == (NodeID("a"), NodeID("b"))
     assert od.demand == pytest.approx(5.0)
+
+
+def test_forecast_populates_full_schema() -> None:
+    """4 段階（A 点需要・B OD・C 検証）＋ η_a が ForecastResult に揃う
+
+    entrance -e1=10-> mid -e2=10-> hall（GOAL）の完全観測・決定可能チェーン
+    e1 は履歴 η=0.4，e2 は履歴/参照なしで fallback
+    """
+    graph = Graph(
+        nodes=(
+            _node("entrance", NodeKind.TRANSIT_ONLY, boundary=True),
+            _node("mid", NodeKind.TRANSIT_ONLY),
+            _node("hall", NodeKind.GOAL),
+        ),
+        edges=(
+            _vector_edge("e1", "entrance", "mid"),
+            _vector_edge("e2", "mid", "hall"),
+        ),
+    )
+    observations = Observations(
+        observed_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        arc_flows=(_flow("e1", 10.0), _flow("e2", 10.0)),
+    )
+    history = HistoryDigest(
+        arc_stats=(ArcHistoryStat(edge_id=EdgeID("e1"), flow_sensitivity_eta=0.4),)
+    )
+
+    result = forecast(
+        graph=graph,
+        observations=observations,
+        history_digest=history,
+        references=Reference(),
+        triggered_edges=(EdgeID("e1"),),
+        config=_config(),  # fallback_eta=1.0
+    )
+
+    # Step A: 点需要（全有効ノード）
+    assert len(result.node_demand) == 3
+    # Step B: OD（entrance→hall）と全ノードの解像度
+    assert len(result.od_matrix) == 1
+    assert result.od_matrix[0].origin == NodeID("entrance")
+    assert result.od_matrix[0].destination == NodeID("hall")
+    assert len(result.estimation_resolution) == 3
+    assert all(
+        r.mode == ODResolutionMode.TURNING_EXACT for r in result.estimation_resolution
+    )
+    # Step C: 再現残差 0・全ノード信頼度 1.0
+    assert result.reproduction_error == pytest.approx(0.0)
+    assert len(result.node_confidence) == 3
+    assert all(nc.confidence == pytest.approx(1.0) for nc in result.node_confidence)
+    # η_a: 履歴採用の e1 と fallback の e2
+    etas = {s.edge_id: s.eta for s in result.arc_flow_sensitivity}
+    assert etas[EdgeID("e1")] == pytest.approx(0.4)
+    assert etas[EdgeID("e2")] == pytest.approx(1.0)
+    assert EdgeID("e2") in result.fallback_usage.used_default_edges
+    assert EdgeID("e1") not in result.fallback_usage.used_default_edges
