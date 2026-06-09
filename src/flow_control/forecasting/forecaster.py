@@ -5,7 +5,7 @@ from ..domain.history import HistoryDigest
 from ..domain.observations import Observations
 from ..domain.references import Reference
 from .config import ResolvedConfig
-from .demand import ODDemand, compute_node_flow_balances, estimate_od_open
+from .demand import NodeDemand, ODDemand, compute_node_demand, estimate_od_open
 
 
 @dataclass(frozen=True)
@@ -36,6 +36,7 @@ class FallbackReport:
 @dataclass(frozen=True)
 class ForecastResult:
     od_matrix: tuple[ODDemand, ...] = ()
+    node_demand: tuple[NodeDemand, ...] = ()
     node_confidence: tuple[NodeConfidence, ...] = ()
     arc_flow_sensitivity: tuple[ArcFlowSensitivity, ...] = ()
     fallback_usage: FallbackReport = field(default_factory=FallbackReport)
@@ -51,10 +52,12 @@ def forecast(
 ) -> ForecastResult:
     is_open_mode = len(graph.boundary_nodes()) > 0
 
-    node_flow_balances = compute_node_flow_balances(graph, observations)
+    # Step A: 点需要の独立推定（モード非依存，数理補助 §10.1）
+    node_demand = compute_node_demand(graph, observations, config)
 
+    # Step B: OD 推定（数理補助 §10.2）
     if is_open_mode:
-        od_matrix = estimate_od_open(graph, node_flow_balances, config)
+        od_matrix = estimate_od_open(graph, node_demand, config)
     else:
         # TODO: Closed モードの両制約 IPF
         od_matrix = ()
@@ -66,6 +69,7 @@ def forecast(
 
     return ForecastResult(
         od_matrix=od_matrix,
+        node_demand=node_demand,
         node_confidence=node_confidence,
         arc_flow_sensitivity=arc_flow_sensitivity,
         fallback_usage=fallback_usage,

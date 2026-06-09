@@ -15,7 +15,7 @@ from flow_control.domain import (
 )
 from flow_control.forecasting.config import ResolvedConfig
 from flow_control.forecasting.demand import (
-    NodeFlowBalance,
+    NodeDemand,
     ODDemand,
     estimate_od_open,
 )
@@ -42,12 +42,19 @@ def _edge(edge_id: str, a: str, b: str) -> Edge:
     )
 
 
-def _bal(node_id: str, net: float) -> NodeFlowBalance:
-    """ネット需要 net を持つ NodeFlowBalance（net>0 で Source，net<0 で Sink）"""
-    return NodeFlowBalance(
+def _bal(node_id: str, net: float) -> NodeDemand:
+    """net>0 で生成 prod=net の Source，net<0 で吸収 absorb=|net| の Sink を作る
+
+    estimate_od_open は production / absorption のみ参照するため，他フィールドは整合値で埋める
+    """
+    return NodeDemand(
         node_id=NodeID(node_id),
-        gross_outflow=net if net > 0 else 0.0,
-        gross_inflow=-net if net < 0 else 0.0,
+        gross_out=net if net > 0 else 0.0,
+        gross_in=-net if net < 0 else 0.0,
+        production=net if net > 0 else 0.0,
+        absorption=-net if net < 0 else 0.0,
+        transit=0.0,
+        staying=-net if net < 0 else 0.0,
     )
 
 

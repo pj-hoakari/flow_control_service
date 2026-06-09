@@ -8,6 +8,7 @@ from enum import Enum
 class NodeKind(str, Enum):
     GOAL = "GOAL"
     GOAL_TRANSIT_MIXED = "GOAL_TRANSIT_MIXED"
+    TRANSIT_ONLY = "TRANSIT_ONLY"
 
 
 class DirectionConstraint(str, Enum):

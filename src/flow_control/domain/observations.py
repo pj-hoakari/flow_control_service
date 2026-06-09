@@ -37,7 +37,8 @@ class ArcScalarFlow:
 @dataclass(frozen=True)
 class NodeOccupancy:
     node_id: NodeID
-    occupancy: float
+    occupancy: float  # 人数スコア（占有レベル O_v。リトルの法則で定常滞在の復元に使用）
+    occupancy_delta: float = 0.0  # 観測ウィンドウ内の占有量変化 ΔOcc（蓄積フェーズの滞在識別）
     confidence_flag: ConfidenceFlag = ConfidenceFlag.OK
 
 

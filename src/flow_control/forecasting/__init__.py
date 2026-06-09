@@ -1,7 +1,7 @@
 from .demand import (
-    NodeFlowBalance,
+    NodeDemand,
     ODDemand,
-    compute_node_flow_balances,
+    compute_node_demand,
     estimate_od_open,
 )
 from .forecaster import (
@@ -18,10 +18,10 @@ __all__ = [
     "FallbackReport",
     "ForecastResult",
     "NodeConfidence",
-    "NodeFlowBalance",
+    "NodeDemand",
     "ODDemand",
     "ReferenceSampleCount",
-    "compute_node_flow_balances",
+    "compute_node_demand",
     "estimate_od_open",
     "forecast",
 ]
