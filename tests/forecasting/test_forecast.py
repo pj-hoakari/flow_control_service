@@ -14,6 +14,7 @@ from flow_control.domain import (
     FlowDirection,
     Graph,
     HistoryDigest,
+    Mode,
     Node,
     NodeID,
     NodeKind,
@@ -140,7 +141,7 @@ def test_forecast_closed_mode_decomposes_and_builds_od() -> None:
 
 
 def test_forecast_populates_full_schema() -> None:
-    """4 段階（A 点需要・B OD・C 検証）＋ η_a が ForecastResult に揃う
+    """4 段階（A 点需要・B OD・C 検証）＋ η_e が ForecastResult に揃う
 
     entrance -e1=10-> mid -e2=10-> hall（GOAL）の完全観測・決定可能チェーン
     e1 は履歴 η=0.4，e2 は履歴/参照なしで fallback
@@ -187,9 +188,88 @@ def test_forecast_populates_full_schema() -> None:
     assert result.reproduction_error == pytest.approx(0.0)
     assert len(result.node_confidence) == 3
     assert all(nc.confidence == pytest.approx(1.0) for nc in result.node_confidence)
-    # η_a: 履歴採用の e1 と fallback の e2
+    # η_e: 履歴採用の e1 と fallback の e2
     etas = {s.edge_id: s.eta for s in result.arc_flow_sensitivity}
     assert etas[EdgeID("e1")] == pytest.approx(0.4)
     assert etas[EdgeID("e2")] == pytest.approx(1.0)
     assert EdgeID("e2") in result.fallback_usage.used_default_edges
     assert EdgeID("e1") not in result.fallback_usage.used_default_edges
+
+
+def test_forecast_mode_none_matches_graph_derivation() -> None:
+    # mode 未指定（None）とグラフ由来の OPEN が等価であることを確認
+    graph = Graph(
+        nodes=(
+            _node("entrance", NodeKind.TRANSIT_ONLY, boundary=True),
+            _node("mid", NodeKind.TRANSIT_ONLY),
+            _node("hall", NodeKind.GOAL),
+        ),
+        edges=(
+            _vector_edge("e1", "entrance", "mid"),
+            _vector_edge("e2", "mid", "hall"),
+        ),
+    )
+    observations = Observations(
+        observed_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        arc_flows=(_flow("e1", 10.0), _flow("e2", 10.0)),
+    )
+
+    default = forecast(
+        graph=graph,
+        observations=observations,
+        history_digest=HistoryDigest(),
+        references=Reference(),
+        triggered_edges=(),
+        config=_config(),
+    )
+    explicit_open = forecast(
+        graph=graph,
+        observations=observations,
+        history_digest=HistoryDigest(),
+        references=Reference(),
+        triggered_edges=(),
+        config=_config(),
+        mode=Mode.OPEN,
+    )
+
+    assert explicit_open.od_matrix == default.od_matrix
+
+
+def test_forecast_mode_overrides_graph_derivation() -> None:
+    # 境界→境界のみのグラフは graph 由来では OPEN（ext→ext 除外で OD 空）だが、
+    # mode=CLOSED を渡すと除外されず OD が生成される（mode が導出を上書きする）
+    graph = Graph(
+        nodes=(
+            _node("ent", NodeKind.TRANSIT_ONLY, boundary=True),
+            _node("ex", NodeKind.GOAL, boundary=True),
+        ),
+        edges=(_vector_edge("e1", "ent", "ex"),),
+    )
+    observations = Observations(
+        observed_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        arc_flows=(_flow("e1", 10.0),),
+    )
+
+    # OPEN（graph 由来の既定と一致）: ext→ext は除外され OD は空
+    open_result = forecast(
+        graph=graph,
+        observations=observations,
+        history_digest=HistoryDigest(),
+        references=Reference(),
+        triggered_edges=(),
+        config=_config(),
+        mode=Mode.OPEN,
+    )
+    assert open_result.od_matrix == ()
+
+    # CLOSED: ext→ext 除外なし → OD が生成される
+    closed = forecast(
+        graph=graph,
+        observations=observations,
+        history_digest=HistoryDigest(),
+        references=Reference(),
+        triggered_edges=(),
+        config=_config(),
+        mode=Mode.CLOSED,
+    )
+    assert len(closed.od_matrix) >= 1

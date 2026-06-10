@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 
+from ..domain.enums import Mode
 from ..domain.graph import EdgeID, Graph
 from ..domain.history import HistoryDigest
 from ..domain.observations import Observations
@@ -33,12 +34,18 @@ def forecast(
     references: Reference,
     triggered_edges: tuple[EdgeID, ...],
     config: ResolvedConfig,
+    mode: Mode | None = None,
 ) -> ForecastResult:
     # triggered_edges は DetourRouting / Optimization 向けの引き回し
     # Forecasting では未使用
     del triggered_edges
 
-    is_open_mode = len(graph.boundary_nodes()) > 0
+    # mode は RequestHandler から伝播する Open/Closed
+    # None の場合はグラフから導出（decide_mode と等価: 有効境界 1 つ以上で OPEN）
+    if mode is not None:
+        is_open_mode = mode == Mode.OPEN
+    else:
+        is_open_mode = len(graph.boundary_nodes()) > 0
 
     # Step A: 点需要の独立推定
     node_demand = compute_node_demand(graph, observations, config)
@@ -51,7 +58,7 @@ def forecast(
     # Step C: 整合・検証
     validation = validate_od(graph, observations, od_result.od_matrix, config)
 
-    # フロー感度 η_a
+    # フロー感度 η_e（エッジ単位）
     sensitivity = resolve_arc_flow_sensitivity(
         graph, history_digest, references, config
     )

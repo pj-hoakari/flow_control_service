@@ -34,3 +34,10 @@ class ObservationType(str, Enum):
 class FlowDirection(str, Enum):
     A_TO_B = "A_TO_B"
     B_TO_A = "B_TO_A"
+
+
+class Mode(str, Enum):
+    # 入退出点（is_boundary かつ enabled）が 1 つ以上あれば OPEN、無ければ CLOSED
+    # 各 Step（Forecasting / DetourRouting / Optimization / FeedbackExtractor）に伝播
+    OPEN = "OPEN"
+    CLOSED = "CLOSED"

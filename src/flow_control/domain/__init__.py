@@ -2,6 +2,7 @@ from .enums import (
     CurrentDirection,
     DirectionConstraint,
     FlowDirection,
+    Mode,
     NodeKind,
     ObservationType,
 )
@@ -31,6 +32,7 @@ __all__ = [
     "FlowDirection",
     "Graph",
     "HistoryDigest",
+    "Mode",
     "Node",
     "NodeID",
     "NodeKind",
