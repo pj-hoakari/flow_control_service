@@ -13,6 +13,7 @@ from .config import ResolvedConfig
 from .diagnostics import (
     HighStagnationEvidence,
     QueueDiversityEvidence,
+    QueueExpiredEvidence,
     QueueScoreEvidence,
     SurgeEvidence,
     TriggerEvidence,
@@ -30,6 +31,9 @@ EPSILON_FLOW = 1e-6
 
 _TARGET_PREFIX_EDGE = "edge:"
 _TARGET_PREFIX_NODE = "node:"
+
+# evaluate_cooldown の watched_edges 既定値（パラメータ既定式での呼び出しを避ける）
+_NO_WATCHED_EDGES: frozenset[EdgeID] = frozenset()
 
 
 class EventKind(str, Enum):
@@ -99,11 +103,18 @@ def detect_metric_triggers(
             and surge_rate > config.surge_rate_threshold_percent_per_min
         ):
             surge_fired = True
+            # キュー蓄積スコア = 正規化超過率
+            # 発火時は >= 1
+            surge_threshold = config.surge_rate_threshold_percent_per_min
+            surge_score = (
+                surge_rate / surge_threshold if surge_threshold > EPSILON_FLOW else 1.0
+            )
             fired_triggers.append(
                 FiredTrigger(
                     kind=QueuedTriggerKind.SURGE,
                     fired_at=server_time,
                     origin_edge_id=edge.edge_id,
+                    score=surge_score,
                     snapshot_ref=observations.snapshot_ref,
                 )
             )
@@ -118,25 +129,41 @@ def detect_metric_triggers(
                 )
             )
 
+        recent_stagnation_ma = _recent_stagnation_average(
+            history_digest.window_series_of(edge.edge_id)
+        )
         stagnation_fired, next_watch = _evaluate_high_stagnation_trigger(
             edge.edge_id,
             observed_stagnation,
             history_stat,
+            recent_stagnation_ma,
             previous_state.watch_state_of(edge.edge_id),
             config.high_stagnation_duration_min,
             config.beta,
             server_time,
         )
         if stagnation_fired:
+            # キュー蓄積スコア = s_obs / p90
+            # 発火時は (b).1 成立で >= 1
+            p90 = history_stat.p90_stagnation if history_stat is not None else None
+            stagnation_score = (
+                observed_stagnation.stagnation / p90
+                if observed_stagnation is not None
+                and p90 is not None
+                and p90 > EPSILON_FLOW
+                else 1.0
+            )
             fired_triggers.append(
                 FiredTrigger(
                     kind=QueuedTriggerKind.HIGH_STAGNATION,
                     fired_at=server_time,
                     origin_edge_id=edge.edge_id,
+                    score=stagnation_score,
                     snapshot_ref=observations.snapshot_ref,
                 )
             )
-            # 発火時のみ観測値・履歴 p90 が揃う。揃っていれば Evidence を残す
+            # 発火時のみ観測値・履歴 p90 が揃う
+            # 揃っていれば Evidence を残す
             if (
                 observed_stagnation is not None
                 and history_stat is not None
@@ -181,7 +208,9 @@ def _evaluate_surge_rate(
     if history_series is None:
         return None
 
-    series = [(t, v) for (t, v) in history_series.samples if t >= window_start_time]
+    series = [
+        (t, v) for (t, v) in history_series.flow_samples if t >= window_start_time
+    ]
 
     if observed_scaler_flow is not None and observed_at >= window_start_time:
         series.append((observed_at, observed_scaler_flow.observed_count))
@@ -208,10 +237,22 @@ def _evaluate_surge_rate(
     return (slope / y_mean) * 100.0
 
 
+def _recent_stagnation_average(
+    history_series: ArcWindowSeries | None,
+) -> float | None:
+    # 高停滞 (b).2 用の直近停滞量移動平均
+    # stagnation_samples が空なら None
+    # 系列は直近ウィンドウ（直近30分+分解能）として外部が事前計算する
+    if history_series is None or not history_series.stagnation_samples:
+        return None
+    return statistics.mean(v for (_, v) in history_series.stagnation_samples)
+
+
 def _evaluate_high_stagnation_trigger(
     edge_id: EdgeID,
     observed_stagnation: ArcStagnation | None,
     history_stat: ArcHistoryStat | None,
+    recent_stagnation_ma: float | None,
     previous_watch: ArcWatchState | None,
     high_stagnation_duration_min: float,
     beta: float,
@@ -222,10 +263,13 @@ def _evaluate_high_stagnation_trigger(
 
     stagnation = observed_stagnation.stagnation
     p90 = history_stat.p90_stagnation
-    baseline = history_stat.baseline_stagnation
 
+    # (b).1: 観測停滞量が p90 以上
     percentile_breached = p90 is not None and stagnation >= p90
-    delta_breached = baseline is not None and (stagnation - baseline) >= beta
+    # (b).2: 観測停滞量と直近移動平均の差分が beta 以上
+    delta_breached = (
+        recent_stagnation_ma is not None and (stagnation - recent_stagnation_ma) >= beta
+    )
 
     if not percentile_breached and not delta_breached:
         return False, None
@@ -336,6 +380,9 @@ class CooldownDecision:
     triggered_nodes: tuple[NodeID, ...]
     new_state: DetectionState
     evidences: tuple[TriggerEvidence, ...] = ()
+    # 発火副作用（cooldown_until 更新・キュー消化）を含まない遷移候補
+    # 発火しない verdict では new_state と等価
+    abort_state: DetectionState | None = None
 
 
 def evaluate_cooldown(
@@ -343,7 +390,9 @@ def evaluate_cooldown(
     fired_triggers: tuple[FiredTrigger, ...],
     server_time: datetime,
     config: ResolvedConfig,
+    watched_edges: frozenset[EdgeID] = _NO_WATCHED_EDGES,
 ) -> CooldownDecision:
+    # watched_edges: 現時点で警戒条件 (b).1 または (b).2 を満たすエッジ集合（鮮度ガード用）
     danger_triggers = tuple(
         t for t in fired_triggers if t.kind == QueuedTriggerKind.DANGER
     )
@@ -354,13 +403,15 @@ def evaluate_cooldown(
     if previous_state.is_in_cooldown(server_time):
         if danger_triggers:
             # 危険フラグはクールタイム中でも即時発火
-            return _fire(
+            # abort: 発火副作用なし（cooldown・キュー据え置き，危険フラグはキューに積まない）
+            decision = _fire(
                 previous_state,
                 server_time,
                 config,
                 previous_state.trigger_queue,
                 fired_triggers,
             )
+            return replace(decision, abort_state=previous_state)
         if normal_triggers:
             merged_queue = _merge_into_queue(
                 previous_state.trigger_queue, normal_triggers
@@ -372,28 +423,73 @@ def evaluate_cooldown(
                 queue_evidences = _queue_fire_evidences(
                     merged_queue, config, server_time
                 )
-                return _fire(
+                decision = _fire(
                     previous_state,
                     server_time,
                     config,
                     merged_queue,
                     evidences=queue_evidences,
                 )
+                # abort: キュー追加は副作用でない（消化はしない）・cooldown 据え置き
+                abort = replace(previous_state, trigger_queue=merged_queue)
+                return replace(decision, abort_state=abort)
             queued_state = replace(previous_state, trigger_queue=merged_queue)
-            return CooldownDecision(VerdictHint.QUEUED, (), (), queued_state)
+            return CooldownDecision(
+                VerdictHint.QUEUED, (), (), queued_state, abort_state=queued_state
+            )
         # クールタイム中，トリガーなし
-        return CooldownDecision(VerdictHint.SKIPPED_COOLDOWN, (), (), previous_state)
+        return CooldownDecision(
+            VerdictHint.SKIPPED_COOLDOWN,
+            (),
+            (),
+            previous_state,
+            abort_state=previous_state,
+        )
 
-    # クールタイム外，トリガーがあれば発火，なければ未検出
+    # クールタイム外，新規トリガーがあれば発火（キュー残も統合）
     if fired_triggers:
-        return _fire(
+        # abort: 発火トリガーはキューに積まない（再キューは finalize の責務）・cooldown 据え置き
+        decision = _fire(
             previous_state,
             server_time,
             config,
             previous_state.trigger_queue,
             fired_triggers,
         )
-    return CooldownDecision(VerdictHint.NO_TRIGGER, (), (), previous_state)
+        return replace(decision, abort_state=previous_state)
+
+    # 新規トリガーなし・キュー残あり → 鮮度ガード付きの統合発火
+    if previous_state.trigger_queue:
+        if _queue_fresh(
+            previous_state.trigger_queue, watched_edges, server_time, config
+        ):
+            # abort: キュー消化しない・cooldown 据え置き
+            decision = _fire(
+                previous_state,
+                server_time,
+                config,
+                previous_state.trigger_queue,
+            )
+            return replace(decision, abort_state=previous_state)
+        # 鮮度切れ → キューを破棄し QUEUE_EXPIRED を記録して未検出
+        # 破棄は発火副作用ではないため abort も同じく破棄済み
+        dropped_state = replace(previous_state, trigger_queue=())
+        expired_evidence = QueueExpiredEvidence(
+            occurred_at=server_time,
+            dropped_count=len(previous_state.trigger_queue),
+        )
+        return CooldownDecision(
+            VerdictHint.NO_TRIGGER,
+            (),
+            (),
+            dropped_state,
+            (expired_evidence,),
+            abort_state=dropped_state,
+        )
+
+    return CooldownDecision(
+        VerdictHint.NO_TRIGGER, (), (), previous_state, abort_state=previous_state
+    )
 
 
 def _fire(
@@ -409,6 +505,32 @@ def _fire(
     new_state = replace(previous_state, cooldown_until=cooldown_until, trigger_queue=())
     return CooldownDecision(
         VerdictHint.TRIGGERED, triggered_edges, triggered_nodes, new_state, evidences
+    )
+
+
+def _queue_fresh(
+    queue: tuple[QueuedTrigger, ...],
+    watched_edges: frozenset[EdgeID],
+    server_time: datetime,
+    config: ResolvedConfig,
+) -> bool:
+    # 鮮度ガード
+    # X 分は queue_freshness_min、未設定なら cooldown_duration_min / 2
+    if not queue:
+        return False
+    x_min = (
+        config.queue_freshness_min
+        if config.queue_freshness_min is not None
+        else config.cooldown_duration_min / 2.0
+    )
+    latest_fired = max(entry.last_fired_at for entry in queue)
+    if server_time - latest_fired <= timedelta(minutes=x_min):
+        return True
+    # キュー対象アークのいずれかが現時点で警戒条件 (b).1 / (b).2 を満たすか
+    return any(
+        entry.origin_edge_id in watched_edges
+        for entry in queue
+        if entry.origin_edge_id is not None
     )
 
 
@@ -561,11 +683,14 @@ def apply_warmup_events(
     config: ResolvedConfig,
 ) -> DetectionState:
     # ENABLE/ADD_* を受けた対象に server_time + warmup_duration を設定
+    # DISABLE を受けた対象は warmup エントリを削除
     warmup_until = server_time + timedelta(minutes=config.warmup_duration_min)
     warmup_map = {w.target_key: w.until for w in previous_state.warmup_states}
     for event in events:
         if event.kind in _WARMUP_EVENT_KINDS:
             warmup_map[event.target_id] = warmup_until
+        elif event.kind == EventKind.DISABLE:
+            _ = warmup_map.pop(event.target_id, None)
 
     if warmup_map == {w.target_key: w.until for w in previous_state.warmup_states}:
         return previous_state

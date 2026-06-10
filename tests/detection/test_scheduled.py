@@ -3,17 +3,16 @@
 スケジュールイベント適用テスト
 
 - SCHEDULED_INFLOW / SCHEDULED_ATTR_CHANGE はクールタイムをリセットする
-- キューは保持する
+- リセット時点ではキューを保持する（発火副作用なし）
 - 状態変化そのものはトリガー発火扱いとしない
 - リセット後に通常トリガーが重複した場合は即時発火しクールタイムを計時し直す
+- リセットでクールタイム解除後は、保持キューが鮮度ガードを満たせば統合発火する
 """
 
 from datetime import datetime, timedelta
 
 from flow_control.detection.config import ResolvedConfig
 from flow_control.detection.detector import detect
-from flow_control.domain.history import HistoryDigest
-from flow_control.domain.observations import Observations
 from flow_control.detection.state import (
     DetectionState,
     QueuedTrigger,
@@ -26,6 +25,8 @@ from flow_control.detection.triggers import (
     apply_scheduled_events,
 )
 from flow_control.domain import EdgeID, Graph
+from flow_control.domain.history import HistoryDigest
+from flow_control.domain.observations import Observations
 
 
 def _config(
@@ -170,12 +171,14 @@ def test_detect_scheduled_only_clears_cooldown_without_firing(
     assert result.new_state.cooldown_until is None
 
 
-def test_detect_scheduled_preserves_queue_when_no_trigger(
+def test_detect_scheduled_reset_consolidates_fresh_queue(
     base_time: datetime,
     basic_graph: Graph,
     edge_id: EdgeID,
     make_flat_series,
 ):
+    # スケジュールでクールタイムを解除した後、保持された新鮮なキュー
+    # （直近発火 5 分前 <= 鮮度ガード 30 分）は新規トリガーが無くても統合発火する（§4.8）
     history, observations = _flat_inputs(edge_id, base_time, make_flat_series)
     queued = _queued("e1", base_time - timedelta(minutes=5))
     previous = DetectionState(
@@ -189,13 +192,45 @@ def test_detect_scheduled_preserves_queue_when_no_trigger(
         history_digest=history,
         previous_state=previous,
         events=(_scheduled("node:n1", base_time),),
-        config=_config(),
+        config=_config(cooldown_min=60.0),
+        server_time=base_time,
+    )
+
+    assert result.verdict_hint == VerdictHint.TRIGGERED
+    assert result.triggered_edges == (EdgeID("e1"),)
+    assert result.new_state.trigger_queue == ()
+    # 統合発火でクールタイムを計時し直す
+    assert result.new_state.cooldown_until == base_time + timedelta(minutes=60.0)
+
+
+def test_detect_scheduled_reset_drops_stale_queue_as_expired(
+    base_time: datetime,
+    basic_graph: Graph,
+    edge_id: EdgeID,
+    make_flat_series,
+):
+    # クールタイム解除後、保持キューが鮮度切れ（直近発火 40 分前 > 30 分）かつ
+    # 警戒条件も満たさない → QUEUE_EXPIRED で破棄し未検出（§4.8）
+    history, observations = _flat_inputs(edge_id, base_time, make_flat_series)
+    queued = _queued("e1", base_time - timedelta(minutes=40))
+    previous = DetectionState(
+        cooldown_until=base_time + timedelta(minutes=30),
+        trigger_queue=(queued,),
+    )
+
+    result = detect(
+        graph=basic_graph,
+        observations=observations,
+        history_digest=history,
+        previous_state=previous,
+        events=(_scheduled("node:n1", base_time),),
+        config=_config(cooldown_min=60.0),
         server_time=base_time,
     )
 
     assert result.verdict_hint == VerdictHint.NO_TRIGGER
     assert result.new_state.cooldown_until is None
-    assert result.new_state.trigger_queue == (queued,)
+    assert result.new_state.trigger_queue == ()
 
 
 def test_detect_scheduled_reset_lets_concurrent_surge_fire_immediately(

@@ -2,7 +2,7 @@
 
 急増トリガーテスト
 ``slope / mean(flow) * 100 > surge_rate_threshold_percent_per_min``
-   - slope: ``HistoryDigest.window_series[edge].samples`` と
+   - slope: ``HistoryDigest.window_series[edge].flow_samples`` と
      ``Observations.arc_scalar_flows[edge]`` をマージした系列の最小二乗回帰傾き [flow/分]
    - mean(flow): 同マージ系列の流量平均
 
@@ -18,11 +18,11 @@ from datetime import datetime
 import pytest
 
 from flow_control.detection.config import ResolvedConfig
-from flow_control.domain.history import ArcWindowSeries, HistoryDigest
-from flow_control.domain.observations import Observations
 from flow_control.detection.state import DetectionState
 from flow_control.detection.triggers import detect_metric_triggers
 from flow_control.domain import EdgeID, Graph
+from flow_control.domain.history import ArcWindowSeries, HistoryDigest
+from flow_control.domain.observations import Observations
 
 
 def _run(
@@ -145,7 +145,7 @@ def test_surge_does_not_fire_with_insufficient_samples(
     # 履歴ウィンドウは空，直近観測値のみ 1 件
     # 直近観測値を加えてもサンプル数 1 のみで傾きを算出できない
     # → トリガーなし
-    window = ArcWindowSeries(edge_id=edge_id, samples=())
+    window = ArcWindowSeries(edge_id=edge_id, flow_samples=())
     history = HistoryDigest(window_series=(window,))
     observations = make_scalar_observation(
         edge_id, observed_at=base_time, observed_count=100.0

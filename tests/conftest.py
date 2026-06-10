@@ -126,7 +126,7 @@ def make_linear_series():
     ``sample_count`` 件のサンプルを ``observed_at`` を最終点として
     ``step_minutes`` 間隔で配置する
     系列の最終 1 件を ``ArcScalarFlow``、残り ``sample_count - 1`` 件を
-    ``ArcWindowSeries.samples`` として返す
+    ``ArcWindowSeries.flow_samples`` として返す
 
     複数エッジ向けには本 fixture をエッジごとに呼び出し、返値を集約して
     ``HistoryDigest.window_series`` および ``Observations.arc_scalar_flows`` に組み立てる
@@ -149,7 +149,7 @@ def make_linear_series():
             t = start_time + timedelta(minutes=i * step_minutes)
             v = start_value + slope_per_min * (i * step_minutes)
             history_samples.append((t, v))
-        window = ArcWindowSeries(edge_id=edge_id, samples=tuple(history_samples))
+        window = ArcWindowSeries(edge_id=edge_id, flow_samples=tuple(history_samples))
 
         last_value = start_value + slope_per_min * span
         scalar_flow = ArcScalarFlow(edge_id=edge_id, observed_count=last_value)
@@ -225,11 +225,18 @@ def make_stagnation_observation():
 
 @pytest.fixture
 def make_history_with_arc_stats():
-    """``ArcHistoryStat`` のみを束ねた ``HistoryDigest`` を組み立てる
+    """``ArcHistoryStat`` と高停滞 (b).2 用の ``stagnation_samples`` を束ねた
+    ``HistoryDigest`` を組み立てる
 
-    各エントリは ``(edge_id, p90_stagnation, baseline_stagnation)`` のタプルで指定する
-    ``p90_stagnation`` / ``baseline_stagnation`` は ``None`` 可
+    各エントリは ``(edge_id, p90_stagnation, recent_stagnation_ma)`` のタプルで指定する
+    第 3 要素は高停滞 (b).2 の直近移動平均（数理§9.2）として ``stagnation_samples`` に
+    展開される。平均は時刻に依存しないため単一サンプルで表現する
+    ``p90_stagnation`` / ``recent_stagnation_ma`` は ``None`` 可
+    （``None`` の場合は該当系列を生成せず (b).2 は評価不能）
     """
+
+    # stagnation_samples の平均は時刻に依存しないため固定タイムスタンプを使う
+    _ts = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
     def _make(
         *stats: tuple[EdgeID, float | None, float | None],
@@ -239,10 +246,15 @@ def make_history_with_arc_stats():
                 ArcHistoryStat(
                     edge_id=eid,
                     p90_stagnation=p90,
-                    baseline_stagnation=baseline,
+                    baseline_stagnation=recent_ma,
                 )
-                for (eid, p90, baseline) in stats
-            )
+                for (eid, p90, recent_ma) in stats
+            ),
+            window_series=tuple(
+                ArcWindowSeries(edge_id=eid, stagnation_samples=((_ts, recent_ma),))
+                for (eid, _p90, recent_ma) in stats
+                if recent_ma is not None
+            ),
         )
 
     return _make

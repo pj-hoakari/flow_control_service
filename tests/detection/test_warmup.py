@@ -12,8 +12,6 @@ from datetime import datetime, timedelta
 
 from flow_control.detection.config import ResolvedConfig
 from flow_control.detection.detector import detect
-from flow_control.domain.history import HistoryDigest
-from flow_control.domain.observations import Observations
 from flow_control.detection.state import DetectionState, WarmupState
 from flow_control.detection.triggers import (
     Event,
@@ -23,6 +21,8 @@ from flow_control.detection.triggers import (
     apply_warmup_events,
 )
 from flow_control.domain import EdgeID, Graph
+from flow_control.domain.history import HistoryDigest
+from flow_control.domain.observations import Observations
 
 
 def _config(
@@ -87,6 +87,37 @@ def test_non_warmup_events_do_not_set_warmup(base_time: datetime):
     state = apply_warmup_events(DetectionState(), events, base_time, _config())
 
     assert state.warmup_states == ()
+
+
+def test_disable_event_removes_existing_warmup_entry(base_time: datetime):
+    # DISABLE は対象の warmup エントリを削除する
+    previous = DetectionState(
+        warmup_states=(
+            WarmupState(target_key="edge:e1", until=base_time + timedelta(minutes=60)),
+            WarmupState(target_key="edge:e2", until=base_time + timedelta(minutes=60)),
+        )
+    )
+    events = (_event(EventKind.DISABLE, "edge:e1", base_time),)
+
+    state = apply_warmup_events(previous, events, base_time, _config())
+
+    assert state.warmup_until_of("edge:e1") is None
+    # 他対象の warmup は保持される
+    assert state.warmup_until_of("edge:e2") == base_time + timedelta(minutes=60)
+
+
+def test_disable_event_no_change_when_target_not_in_warmup(base_time: datetime):
+    # 存在しない warmup エントリへの DISABLE は無変化（同一インスタンスを返す）
+    previous = DetectionState(
+        warmup_states=(
+            WarmupState(target_key="edge:e1", until=base_time + timedelta(minutes=60)),
+        )
+    )
+    events = (_event(EventKind.DISABLE, "edge:e2", base_time),)
+
+    state = apply_warmup_events(previous, events, base_time, _config())
+
+    assert state is previous
 
 
 def test_apply_warmup_events_returns_same_state_when_no_change(base_time: datetime):

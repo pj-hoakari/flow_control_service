@@ -9,15 +9,16 @@ from datetime import datetime, timedelta
 
 from flow_control.detection.config import ResolvedConfig
 from flow_control.detection.detector import DetectionResult, detect
-from flow_control.domain.history import HistoryDigest
-from flow_control.domain.observations import Observations
 from flow_control.detection.state import (
     ArcWatchState,
     DetectionState,
     QueuedTriggerKind,
+    RetriggerEntry,
 )
 from flow_control.detection.triggers import Event, EventKind, VerdictHint
 from flow_control.domain import EdgeID, Graph, NodeID
+from flow_control.domain.history import HistoryDigest
+from flow_control.domain.observations import Observations
 
 
 def _config(
@@ -112,6 +113,39 @@ def test_surge_fires_and_starts_cooldown(
     assert result.triggered_edges == (edge_id,)
     assert result.new_state.cooldown_until == base_time + timedelta(minutes=60.0)
     assert result.new_state.trigger_queue == ()
+
+
+def test_abort_state_excludes_fire_side_effects_on_trigger(
+    base_time: datetime,
+    basic_graph: Graph,
+    edge_id: EdgeID,
+    make_linear_series,
+):
+    # TRIGGERED 時、new_state は発火副作用を反映するが abort_state は除外する
+    history, observations = _surge_inputs(edge_id, base_time, make_linear_series)
+    previous = DetectionState(
+        arc_retrigger_counts=(RetriggerEntry(edge_id=edge_id, count=2),)
+    )
+
+    result = detect(
+        graph=basic_graph,
+        observations=observations,
+        history_digest=history,
+        previous_state=previous,
+        events=(),
+        config=_config(cooldown_min=60.0),
+        server_time=base_time,
+    )
+
+    assert result.verdict_hint == VerdictHint.TRIGGERED
+    # new_state: cooldown 計時・再発火カウント加算
+    assert result.new_state.cooldown_until == base_time + timedelta(minutes=60.0)
+    new_entry = result.new_state.retrigger_entry_of(edge_id)
+    assert new_entry is not None and new_entry.count == 3
+    # abort_state: cooldown 据え置き・再発火カウント加算なし
+    assert result.abort_state.cooldown_until is None
+    abort_entry = result.abort_state.retrigger_entry_of(edge_id)
+    assert abort_entry is not None and abort_entry.count == 2
 
 
 def test_danger_flag_fires_for_node(

@@ -11,8 +11,6 @@ from datetime import datetime, timedelta
 
 from flow_control.detection.config import ResolvedConfig
 from flow_control.detection.detector import detect
-from flow_control.domain.history import HistoryDigest
-from flow_control.domain.observations import Observations
 from flow_control.detection.state import DetectionState, RetriggerEntry
 from flow_control.detection.triggers import (
     Event,
@@ -21,6 +19,8 @@ from flow_control.detection.triggers import (
     apply_danger_flag_down,
 )
 from flow_control.domain import EdgeID, Graph
+from flow_control.domain.history import HistoryDigest
+from flow_control.domain.observations import Observations
 
 
 def _down(target_id: str, at: datetime) -> Event:
