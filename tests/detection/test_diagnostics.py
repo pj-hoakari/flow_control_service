@@ -4,7 +4,7 @@
 
 - 検出した各トリガーの TriggerEvidence を収集する
   （SURGE / HIGH_STAGNATION / DANGER / QUEUE_SCORE / QUEUE_DIVERSITY）
-- consecutive_skip_count は TRIGGERED でゼロにリセットし、それ以外では据え置く
+- consecutive_skip_count は Detection では一切変更しない（リセット／加算は finalize 責務）
 """
 
 from datetime import datetime, timedelta
@@ -20,8 +20,6 @@ from flow_control.detection.diagnostics import (
     SurgeEvidence,
     TriggerEvidence,
 )
-from flow_control.domain.history import HistoryDigest
-from flow_control.domain.observations import Observations
 from flow_control.detection.state import (
     ArcWatchState,
     DetectionState,
@@ -36,6 +34,8 @@ from flow_control.detection.triggers import (
     evaluate_cooldown,
 )
 from flow_control.domain import EdgeID, Graph, NodeID
+from flow_control.domain.history import HistoryDigest
+from flow_control.domain.observations import Observations
 
 
 def _config(
@@ -285,12 +285,14 @@ def test_queue_diversity_fire_emits_evidence(base_time: datetime):
 # ---------------------------------------------------------------------------
 
 
-def test_consecutive_skip_count_reset_on_trigger(
+def test_consecutive_skip_count_untouched_on_trigger(
     base_time: datetime,
     basic_graph: Graph,
     edge_id: EdgeID,
     make_linear_series,
 ):
+    # Detection は consecutive_skip_count に触れない
+    # （発火時の 0 リセットは §4.9 の finalize の責務）
     history, observations = _surge_inputs(edge_id, base_time, make_linear_series)
     previous = DetectionState(consecutive_skip_count=5)
 
@@ -305,7 +307,7 @@ def test_consecutive_skip_count_reset_on_trigger(
     )
 
     assert result.verdict_hint == VerdictHint.TRIGGERED
-    assert result.new_state.consecutive_skip_count == 0
+    assert result.new_state.consecutive_skip_count == 5
 
 
 def test_consecutive_skip_count_preserved_when_no_trigger(

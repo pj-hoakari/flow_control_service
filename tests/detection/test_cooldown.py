@@ -12,6 +12,7 @@
 from datetime import datetime, timedelta
 
 from flow_control.detection.config import ResolvedConfig
+from flow_control.detection.diagnostics import EvidenceSource, QueueExpiredEvidence
 from flow_control.detection.state import (
     ArcWatchState,
     DetectionState,
@@ -241,6 +242,125 @@ def test_danger_fires_during_cooldown_and_integrates_queue(base_time: datetime):
     assert result.triggered_edges == (EdgeID("e2"), EdgeID("e3"), EdgeID("e1"))
     assert result.new_state.trigger_queue == ()
     assert result.new_state.cooldown_until == base_time + timedelta(minutes=60.0)
+
+
+# ---------------------------------------------------------------------------
+# クールタイム明けのキュー統合発火
+# ---------------------------------------------------------------------------
+
+
+def test_queue_consolidates_and_fires_when_fresh_after_cooldown(base_time: datetime):
+    # クールタイム外・新規トリガーなし・キュー残あり
+    # 直近発火が鮮度ガード X 分（cooldown 60 / 2 = 30 分）以内 → 統合発火
+    recent = _queued("e1", base_time - timedelta(minutes=10), score=1.0)
+    state = DetectionState(cooldown_until=None, trigger_queue=(recent,))
+
+    result = evaluate_cooldown(state, (), base_time, _config(cooldown_min=60.0))
+
+    assert result.verdict == VerdictHint.TRIGGERED
+    assert result.triggered_edges == (EdgeID("e1"),)
+    assert result.new_state.trigger_queue == ()
+    assert result.new_state.cooldown_until == base_time + timedelta(minutes=60.0)
+
+
+def test_queue_dropped_as_expired_when_stale_after_cooldown(base_time: datetime):
+    # 鮮度ガード X 分（30 分）を超過し、警戒条件も満たさない → QUEUE_EXPIRED で破棄
+    stale = _queued("e1", base_time - timedelta(minutes=40), score=1.0)
+    state = DetectionState(cooldown_until=None, trigger_queue=(stale,))
+
+    result = evaluate_cooldown(state, (), base_time, _config(cooldown_min=60.0))
+
+    assert result.verdict == VerdictHint.NO_TRIGGER
+    assert result.triggered_edges == ()
+    assert result.new_state.trigger_queue == ()
+    assert len(result.evidences) == 1
+    evidence = result.evidences[0]
+    assert isinstance(evidence, QueueExpiredEvidence)
+    assert evidence.dropped_count == 1
+
+
+def test_stale_queue_still_fires_when_arc_in_watch_condition(base_time: datetime):
+    # 鮮度ガード時間は超過しているが、キュー対象アークが現時点で警戒条件を満たす → 統合発火
+    stale = _queued("e1", base_time - timedelta(minutes=40), score=1.0)
+    state = DetectionState(cooldown_until=None, trigger_queue=(stale,))
+
+    result = evaluate_cooldown(
+        state,
+        (),
+        base_time,
+        _config(cooldown_min=60.0),
+        watched_edges=frozenset({EdgeID("e1")}),
+    )
+
+    assert result.verdict == VerdictHint.TRIGGERED
+    assert result.triggered_edges == (EdgeID("e1"),)
+    assert result.new_state.trigger_queue == ()
+
+
+def test_queue_freshness_min_overrides_default(base_time: datetime):
+    # queue_freshness_min を明示すると cooldown/2 ではなくその値で判定する
+    entry = _queued("e1", base_time - timedelta(minutes=10), score=1.0)
+    state = DetectionState(cooldown_until=None, trigger_queue=(entry,))
+    config = ResolvedConfig(
+        surge_rate_threshold_percent_per_min=10.0,
+        cooldown_duration_min=60.0,
+        queue_freshness_min=5.0,  # 5 分。直近発火は 10 分前 → 鮮度切れ
+    )
+
+    result = evaluate_cooldown(state, (), base_time, config)
+
+    assert result.verdict == VerdictHint.NO_TRIGGER
+    assert result.evidences[0].source == EvidenceSource.QUEUE_EXPIRED
+
+
+# ---------------------------------------------------------------------------
+# abort_state（発火副作用を含まない遷移候補）
+# ---------------------------------------------------------------------------
+
+
+def test_abort_state_keeps_cooldown_unset_on_fresh_fire(base_time: datetime):
+    # クールタイム外の発火: new_state は計時し直すが abort_state は据え置き
+    state = DetectionState()
+
+    result = evaluate_cooldown(state, (_surge("e1", base_time),), base_time, _config())
+
+    assert result.verdict == VerdictHint.TRIGGERED
+    assert result.new_state.cooldown_until == base_time + timedelta(minutes=60.0)
+    assert result.abort_state is not None
+    assert result.abort_state.cooldown_until is None
+    assert result.abort_state.trigger_queue == ()
+
+
+def test_abort_state_excludes_fire_side_effects_on_queue_fire(base_time: datetime):
+    # キュースコア超過による発火
+    cooldown_until = base_time + timedelta(minutes=30)
+    existing = _queued("e1", base_time - timedelta(minutes=5), score=2.0)
+    state = DetectionState(cooldown_until=cooldown_until, trigger_queue=(existing,))
+    config = _config(score_threshold=2.5, diversity_threshold=10)
+
+    result = evaluate_cooldown(state, (_surge("e1", base_time),), base_time, config)
+
+    assert result.verdict == VerdictHint.TRIGGERED
+    # new_state: 発火副作用適用（cooldown 計時し直し・キュー消化）
+    assert result.new_state.cooldown_until == base_time + timedelta(minutes=60.0)
+    assert result.new_state.trigger_queue == ()
+    # abort_state: 発火副作用なし（cooldown 据え置き・キューは統合済みだが消化しない）
+    assert result.abort_state is not None
+    assert result.abort_state.cooldown_until == cooldown_until
+    assert len(result.abort_state.trigger_queue) == 1
+    assert result.abort_state.trigger_queue[0].accumulated_score == 3.0
+
+
+def test_abort_state_equals_new_state_when_queued(base_time: datetime):
+    # 発火しない verdict では abort_state は new_state と等価
+    cooldown_until = base_time + timedelta(minutes=30)
+    state = DetectionState(cooldown_until=cooldown_until)
+    config = _config(score_threshold=5.0, diversity_threshold=3)
+
+    result = evaluate_cooldown(state, (_surge("e1", base_time),), base_time, config)
+
+    assert result.verdict == VerdictHint.QUEUED
+    assert result.abort_state == result.new_state
 
 
 # ---------------------------------------------------------------------------

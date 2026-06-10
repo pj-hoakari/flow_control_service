@@ -12,6 +12,7 @@ class EvidenceSource(str, Enum):
     DANGER = "DANGER"
     QUEUE_SCORE = "QUEUE_SCORE"
     QUEUE_DIVERSITY = "QUEUE_DIVERSITY"
+    QUEUE_EXPIRED = "QUEUE_EXPIRED"  # 鮮度切れによるキュー破棄
 
 
 @dataclass(frozen=True)
@@ -57,10 +58,18 @@ class QueueDiversityEvidence:
     diversity_threshold: int
 
 
+@dataclass(frozen=True)
+class QueueExpiredEvidence:
+    source: ClassVar[EvidenceSource] = EvidenceSource.QUEUE_EXPIRED
+    occurred_at: datetime
+    dropped_count: int
+
+
 TriggerEvidence = (
     SurgeEvidence
     | HighStagnationEvidence
     | DangerEvidence
     | QueueScoreEvidence
     | QueueDiversityEvidence
+    | QueueExpiredEvidence
 )

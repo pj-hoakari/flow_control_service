@@ -4,6 +4,7 @@ from datetime import datetime
 from ..domain.graph import EdgeID, Graph, NodeID
 from ..domain.history import HistoryDigest
 from ..domain.observations import Observations
+from ..domain.references import Reference
 from .config import ResolvedConfig
 from .diagnostics import DangerEvidence, TriggerEvidence
 from .state import DetectionState, QueuedTriggerKind
@@ -29,7 +30,11 @@ class DetectionResult:
     triggered_edges: tuple[EdgeID, ...]
     triggered_nodes: tuple[NodeID, ...]
     effective_snapshot: Observations
+    # 発火確定時の遷移候補
     new_state: DetectionState
+    # 発火不成立（skipped_time）時の遷移候補：new_state から
+    # 発火副作用（cooldown_until 更新・キュー消化・再発火カウント加算）を除いたもの
+    abort_state: DetectionState
     evidences: tuple[TriggerEvidence, ...] = ()
 
 
@@ -41,7 +46,11 @@ def detect(
     events: tuple[Event, ...],
     config: ResolvedConfig,
     server_time: datetime,
+    references: Reference | None = None,
 ) -> DetectionResult:
+    # 短期テナント縮退モード用
+    _ = references
+
     # イベント適用: ENABLE/ADD_* で対象別ウォームアップを設定
     state = apply_warmup_events(previous_state, events, server_time, config)
     # イベント適用: SCHEDULED_* でクールタイムをリセット（キューは保持）
@@ -53,12 +62,14 @@ def detect(
     if all_targets_in_warmup(state, graph, server_time) and not has_danger_event(
         events
     ):
+        # ウォームアップスキップは発火なし → abort_state は new_state と等価
         return DetectionResult(
             verdict_hint=VerdictHint.SKIPPED_WARMUP,
             triggered_edges=(),
             triggered_nodes=(),
             effective_snapshot=observations,
             new_state=state,
+            abort_state=state,
         )
 
     metric_result = detect_metric_triggers(
@@ -66,17 +77,6 @@ def detect(
         observations=observations,
         history_digest=history_digest,
         previous_state=state,
-        server_time=server_time,
-        config=config,
-    )
-
-    # 再発火カウントを更新
-    # metricトリガーのみを対象とする
-    retrigger_counts = update_retrigger_counts(
-        previous_counts=metric_result.new_state.arc_retrigger_counts,
-        graph=graph,
-        normal_trigger_edges=metric_result.triggered_edges,
-        watch_states=metric_result.new_state.arc_watch_states,
         server_time=server_time,
         config=config,
     )
@@ -107,17 +107,66 @@ def detect(
         for node_id in manual_result.triggered_nodes
     )
 
+    # 鮮度ガード用: 現時点で警戒条件を満たすエッジ集合
+    watched_edges = frozenset(
+        watch.edge_id
+        for watch in metric_result.new_state.arc_watch_states
+        if watch.percentile_breached or watch.delta_breached
+    )
+
     decision = evaluate_cooldown(
         previous_state=metric_result.new_state,
         fired_triggers=danger_triggers + metric_result.fired_triggers,
         server_time=server_time,
         config=config,
+        watched_edges=watched_edges,
     )
 
+    # 再発火カウントの更新は実際の発火（verdict）でゲート
+    # - TRIGGERED: 実発火した通常トリガー起点のみ加算（危険フラグ＝規則4で除外）
+    # - QUEUED:    変更なし（キュー追加は発火ではない）
+    # - SKIPPED_COOLDOWN / NO_TRIGGER: 発火なし → 沈静化カウント進行（fired=()）
+    if decision.verdict == VerdictHint.QUEUED:
+        retrigger_counts = metric_result.new_state.arc_retrigger_counts
+    else:
+        danger_edges = set(manual_result.triggered_edges)
+        if decision.verdict == VerdictHint.TRIGGERED:
+            fired_normal_edges = tuple(
+                e for e in decision.triggered_edges if e not in danger_edges
+            )
+        else:
+            fired_normal_edges = ()
+        retrigger_counts = update_retrigger_counts(
+            previous_counts=metric_result.new_state.arc_retrigger_counts,
+            graph=graph,
+            normal_trigger_edges=fired_normal_edges,
+            watch_states=metric_result.new_state.arc_watch_states,
+            server_time=server_time,
+            config=config,
+        )
+
     new_state = replace(decision.new_state, arc_retrigger_counts=retrigger_counts)
-    # 発火時は連続スキップカウントをリセット
+
+    # abort_state: 発火副作用を含まない遷移候補
+    # 発火なしの verdict では new_state と等価。TRIGGERED のみ発火副作用（cooldown 更新・
+    # キュー消化・再発火カウント加算）を除く。再発火カウントは加算せず沈静化進行のみ
     if decision.verdict == VerdictHint.TRIGGERED:
-        new_state = replace(new_state, consecutive_skip_count=0)
+        abort_retrigger_counts = update_retrigger_counts(
+            previous_counts=metric_result.new_state.arc_retrigger_counts,
+            graph=graph,
+            normal_trigger_edges=(),
+            watch_states=metric_result.new_state.arc_watch_states,
+            server_time=server_time,
+            config=config,
+        )
+        abort_base = (
+            decision.abort_state
+            if decision.abort_state is not None
+            else decision.new_state
+        )
+        abort_state = replace(abort_base, arc_retrigger_counts=abort_retrigger_counts)
+    else:
+        abort_state = new_state
 
     # 検出した通常トリガー・危険フラグ・キュー発火条件のEvidenceを統合
     evidences = metric_result.evidences + danger_evidences + decision.evidences
@@ -131,5 +180,6 @@ def detect(
         triggered_nodes=decision.triggered_nodes,
         effective_snapshot=observations,
         new_state=new_state,
+        abort_state=abort_state,
         evidences=evidences,
     )

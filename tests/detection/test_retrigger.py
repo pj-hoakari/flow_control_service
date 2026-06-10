@@ -13,8 +13,6 @@ from datetime import datetime, timedelta
 
 from flow_control.detection.config import ResolvedConfig
 from flow_control.detection.detector import detect
-from flow_control.domain.history import HistoryDigest
-from flow_control.domain.observations import Observations
 from flow_control.detection.state import (
     ArcWatchState,
     DetectionState,
@@ -36,6 +34,8 @@ from flow_control.domain import (
     NodeKind,
     ObservationType,
 )
+from flow_control.domain.history import HistoryDigest
+from flow_control.domain.observations import Observations
 
 
 def _config(*, quiet_cycles: int = 3, surge_threshold: float = 10.0) -> ResolvedConfig:
@@ -262,6 +262,50 @@ def test_detect_surge_increments_retrigger_count(
     entry = result.new_state.retrigger_entry_of(edge_id)
     assert entry is not None
     assert entry.count == 1
+
+
+def test_detect_queued_trigger_does_not_count(
+    base_time: datetime,
+    basic_graph: Graph,
+    edge_id: EdgeID,
+    make_linear_series,
+):
+    # クールタイム中にメトリク条件が成立してもキュー行きで実発火しない
+    # → 再発火カウントは加算されない（§4.9: queued は変更なし）
+    window, scalar_flow = make_linear_series(
+        edge_id,
+        observed_at=base_time,
+        sample_count=11,
+        start_value=0.0,
+        slope_per_min=10.0,
+    )
+    history = HistoryDigest(window_series=(window,))
+    observations = Observations(observed_at=base_time, arc_scalar_flows=(scalar_flow,))
+    previous = DetectionState(
+        cooldown_until=base_time + timedelta(minutes=30),
+        arc_retrigger_counts=(RetriggerEntry(edge_id=edge_id, count=2),),
+    )
+
+    result = detect(
+        graph=basic_graph,
+        observations=observations,
+        history_digest=history,
+        previous_state=previous,
+        events=(),
+        config=ResolvedConfig(
+            surge_rate_threshold_percent_per_min=10.0,
+            queue_score_threshold=5.0,
+            queue_diversity_threshold=3,
+        ),
+        server_time=base_time,
+    )
+
+    from flow_control.detection.triggers import VerdictHint
+
+    assert result.verdict_hint == VerdictHint.QUEUED
+    entry = result.new_state.retrigger_entry_of(edge_id)
+    assert entry is not None
+    assert entry.count == 2  # 変更なし
 
 
 def test_detect_danger_flag_does_not_count(

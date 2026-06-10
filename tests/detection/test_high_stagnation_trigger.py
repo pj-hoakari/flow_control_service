@@ -2,9 +2,10 @@
 
 高停滞トリガーテスト
 
-ハイブリッド判定:
-  ``stagnation >= ArcHistoryStat.p90_stagnation``
-  ``stagnation - ArcHistoryStat.baseline_stagnation >= config.beta``
+ハイブリッド判定（数理§9.2）:
+  (b).1 ``stagnation >= ArcHistoryStat.p90_stagnation``
+  (b).2 ``stagnation - 直近停滞量移動平均 >= config.beta``
+        直近移動平均は ``window_series.stagnation_samples`` から算出する
 
 両方が ``config.high_stagnation_duration_min`` (M) 分以上継続したら発火する
 片方のみ満たす場合は ``arc_watch_states`` に警戒状態（``ArcWatchState``）として記録する
@@ -15,11 +16,11 @@ from datetime import datetime, timedelta
 import pytest
 
 from flow_control.detection.config import ResolvedConfig
-from flow_control.domain.history import HistoryDigest
-from flow_control.domain.observations import Observations
 from flow_control.detection.state import ArcWatchState, DetectionState
 from flow_control.detection.triggers import detect_metric_triggers
 from flow_control.domain import EdgeID, Graph
+from flow_control.domain.history import HistoryDigest
+from flow_control.domain.observations import Observations
 
 
 def _run(
