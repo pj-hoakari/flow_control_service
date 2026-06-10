@@ -22,7 +22,6 @@ class Node:
     is_boundary: bool
     enabled: bool
     attribute_tags: tuple[str, ...] = ()
-    occupancy_score: float = 0.0
     time_resolution_s: int = 60
 
 

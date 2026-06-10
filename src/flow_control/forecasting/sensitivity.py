@@ -1,11 +1,11 @@
-"""フロー感度 η_a の決定
+"""フロー感度 η_e の決定（エッジ単位）
 
-各ベクトル型アークの流量感度 η_a を，
+各ベクトル型エッジの流量感度 η_e を，
 履歴 → 参照値 → 既定値のフォールバック階層
 で解決し，どの段にフォールバックしたかをFallbackReport に記録， FeedbackExtractor に供する
 
-η_a^eff = η_a^history                if history にあり
-        = η_a^ref(tag)               if 参照値あり かつ sample_count >= min_reference_sample_count
+η_e^eff = η_e^history                if history にあり
+        = η_e^ref(tag)               if 参照値あり かつ sample_count >= min_reference_sample_count
         = config.fallback_eta        otherwise
 """
 
@@ -34,7 +34,7 @@ class ReferenceSampleCount:
 class FallbackReport:
     used_reference_edges: tuple[
         EdgeID, ...
-    ] = ()  # η_a を参照値からフォールバックしたアーク
+    ] = ()  # η_e を参照値からフォールバックしたエッジ
     used_default_edges: tuple[EdgeID, ...] = ()  # 最終フォールバック値を使ったアーク
     reference_sample_counts: tuple[
         ReferenceSampleCount, ...
@@ -53,9 +53,9 @@ def resolve_arc_flow_sensitivity(
     references: Reference,
     config: ResolvedConfig,
 ) -> SensitivityResult:
-    """有効ベクトルアークごとに η_a を決定し，フォールバック利用を記録
+    """有効ベクトルエッジごとに η_e を決定し，フォールバック利用を記録
 
-    - 対象は有効なベクトル型（VECTOR）アークのみ（η_a はベクトル型のみ）
+    - 対象は有効なベクトル型（VECTOR）エッジのみ（η_e はベクトル型のみ）
     - 出力は enabled_edges() の順序（決定的）
     """
     sensitivities: list[ArcFlowSensitivity] = []
@@ -105,7 +105,7 @@ def _resolve_eta(
     references: Reference,
     config: ResolvedConfig,
 ) -> tuple[float, str, str | None, int]:
-    """1 アークの η_a をフォールバック階層で解決する
+    """1 エッジの η_e をフォールバック階層で解決する
 
     戻り値は (eta, source, 参照に使った tag, その sample_count)
     """

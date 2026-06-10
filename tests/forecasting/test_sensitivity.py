@@ -1,4 +1,4 @@
-"""``resolve_arc_flow_sensitivity``（η_a 決定）のテスト"""
+"""``resolve_arc_flow_sensitivity``（η_e 決定）のテスト"""
 
 import pytest
 
@@ -139,7 +139,7 @@ def test_final_fallback_when_nothing_matches() -> None:
 
 
 def test_scalar_edge_excluded() -> None:
-    """スカラー型アークは η_a の対象外（ベクトル型のみ）"""
+    """スカラー型エッジは η_e の対象外（ベクトル型のみ）"""
     graph = _graph(_edge("e1", observation_type=ObservationType.SCALAR))
 
     result = resolve_arc_flow_sensitivity(
